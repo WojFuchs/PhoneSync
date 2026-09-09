@@ -35,8 +35,13 @@ Program powinien pracować w środowisku Windows i współpracować z systemem p
   - Znaleźć telefon podłączony przez USB
   - Przeszukać wskazane foldery na telefonie **recursively** (ze wszystkich podfolderów)
   - Pominąć foldery wskazane na liście wykluczeń
-  - Kopiować **inkrementalnie**: jeśli plik już istnieje w docelowym folderze (`Sync_*`), nie będzie kopiowany ponownie
-  - Sprawdzić pliki ze **wszystkich istniejących folderów `Sync_*`** - jeśli plik istnieje w którymkolwiek, nie będzie kopiowany
+  - Kopiować **inkrementalnie** z następującą logiką:
+    - Sprawdzić pliki ze **wszystkich istniejących folderów `Sync_*`**
+    - Jeśli plik o identycznej ścieżce i nazwie już istnieje:
+      - Porównać **rozmiar** i **modTime** z telefonem
+      - Jeśli rozmiar i modTime się zgadzają (modTime może się różnić o max. 1 sekundę) → plik już skopiowany, pominąć
+      - Jeśli rozmiar LUB modTime się różnią → **WARNING**: "Plik się zmienił na telefonie: [ścieżka/nazwa]", skopiować do najnowszego folderu `Sync_*`
+      - Jeśli plik nie istnieje w żadnym `Sync_*` → skopiować do najnowszego folderu `Sync_*`
 
 ### 3. Struktura Docelowa
 - Przy każdym uruchomieniu program tworzy **nowy subfolder** w postaci `Sync_<timestamp>` w folderze docelowym
@@ -47,12 +52,23 @@ Program powinien pracować w środowisku Windows i współpracować z systemem p
 
 ### 4. Obsługa Metadanych Plików
 - **Rozmiar pliku**: Odczyt rozmiaru w bajtach z telefonu
-- **Weryfikacja**: Po skopiowaniu sprawdzenie, czy rozmiar na laptopie zgadza się z originalem
+- **Weryfikacja**: Po skopiowaniu sprawdzenie, czy rozmiar na laptopie zgadza się z originalem z dokładnością do bajtu
 - **Modification Time (modTime)**:
   - Odczyt dokładnego czasu modyfikacji z telefonu (do sekundy)
   - Telefon pozostaje **read-only** - nic nie modyfikujemy na telefonie
   - Po skopiowaniu na laptopa: automatyczne ustawienie modTime na laptopie do wartości odczytanej z telefonu
   - Zachowanie dokładności do sekundy
+  
+### 4a. Logika Porównywania Plików (Inkrementalne Kopiowanie)
+- Plik uznawany za **już wcześniej skopiowany** jeśli:
+  - Ścieżka i nazwa pliku są identyczne
+  - **Rozmiar** zgadza się dokładnie (w bajtach)
+  - **modTime** zgadza się z tolerancją **±1 sekunda**
+  
+- Plik wymaga **nowego kopiowania** jeśli:
+  - Istnieje w `Sync_*` z tym samym path/nazwa ale **rozmiar się różni** LUB **modTime się różni o więcej niż 1 sekundę**
+  - Wyświetlić **WARNING**: `"Plik się zmienił na telefonie: [relative_path/nazwa_pliku]"`
+  - Skopiować go do **najnowszego folderu `Sync_*`** (z najnowszym timestamp'em)
 
 ### 5. Bezpieczeństwo i Integracja USB
 - Telefon traktowany jako **read-only** - żadne operacje zapisu
@@ -86,13 +102,17 @@ excluded_folders:
 3. Szuka telefonu podłączonego przez USB
 4. Przeszukuje foldery wskazane w konfiguracji **recursively** (ze wszystkich podfolderów)
 5. Dla każdego znalezionego pliku:
-   - Sprawdza czy plik nie istnieje w żadnym istniejącym folderze `Sync_*` (inkrementalne kopiowanie)
-   - Jeśli plik nie istnieje:
+   - Sprawdza czy plik o identycznej ścieżce i nazwie istnieje w którymkolwiek z istniejących folderów `Sync_*`
+   - Jeśli **istnieje**:
+     - Porównuje rozmiar i modTime
+     - Jeśli rozmiar i modTime się zgadzają (modTime ±1 sekunda) → pominąć (już skopiowany)
+     - Jeśli rozmiar lub modTime się różnią → wyświetlić WARNING i skopiować do najnowszego `Sync_*`
+   - Jeśli **nie istnieje** w żadnym `Sync_*`:
      - Odczytuje rozmiar pliku i modTime z telefonu
-     - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w `Sync_<timestamp>/`)
+     - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>/`)
      - Po skopiowaniu ustawia modTime na laptopie do wartości odczytanej z telefonu
-     - Weryfikuje rozmiar pliku
-6. Raportuje postęp operacji i ewentualne błędy
+     - Weryfikuje rozmiar pliku (musi się zgadzać dokładnie)
+6. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
 
 ## 📌 Uwagi Dodatkowe
 

@@ -1,0 +1,7 @@
+phone_folders:
+  - Pictures
+
+destination_folder: "c:\\Users\\Wojtek\\PhoneSync"
+
+excluded_folders:
+  - .thumbnails

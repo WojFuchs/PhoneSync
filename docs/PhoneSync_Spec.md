@@ -1,12 +1,12 @@
 # PhoneSync - Specyfikacja Programu
 
-## 📋 Opis Ogólny
+## Opis Ogólny
 **PhoneSync** to program do automatycznego kopiowania plików z telefonu Android podłączonego kablem USB do laptopa z systemem Windows 10.
 
-## 🎯 Główny Cel
+## Główny Cel
 Umożliwić szybkie i automatyczne pobieranie plików z wybranych folderów na telefonie Android na dysk laptopa, bez konieczności ręcznego zarządzania poszczególnymi plikami.
 
-## 🔧 Wymagania Techniczne
+## Wymagania Techniczne
 
 ### Środowisko
 - **System operacyjny:** Windows 10
@@ -16,7 +16,7 @@ Umożliwić szybkie i automatyczne pobieranie plików z wybranych folderów na t
 ### Architektura
 Program powinien pracować w środowisku Windows i współpracować z systemem plików telefonu dostępnym przez USB (MTP).
 
-## 📦 Główne Funkcje
+## Główne Funkcje
 
 ### 1. Konfiguracja
 - Plik konfiguracyjny w formacie **YAML**: `PhoneSync_config.yaml`
@@ -96,7 +96,7 @@ excluded_folders:
 - **destination_folder**: Folder docelowy na laptopie
 - **excluded_folders**: Lista podfolderów do pominięcia (nie będą przeszukiwane ani kopiowane)
 
-## 🔄 Przebieg Działania
+## Przebieg Działania
 1. Program odczytuje plik konfiguracyjny `PhoneSync_config.yaml`
 2. Tworzy nowy subfolder `Sync_<timestamp>` w folderze docelowym
 3. Szuka telefonu podłączonego przez USB
@@ -114,7 +114,7 @@ excluded_folders:
      - Weryfikuje rozmiar pliku (musi się zgadzać dokładnie)
 6. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
 
-## 📌 Uwagi Dodatkowe
+## Uwagi Dodatkowe
 
 ### Technologia i Integracja
 - Pierwotnie preferowane: MTP (Media Transfer Protocol)

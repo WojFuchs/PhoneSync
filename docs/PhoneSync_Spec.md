@@ -36,19 +36,19 @@ Program powinien pracować w środowisku Windows i współpracować z systemem p
   - Przeszukać wskazane foldery na telefonie **recursively** (ze wszystkich podfolderów)
   - Pominąć foldery wskazane na liście wykluczeń
   - Kopiować **inkrementalnie** z następującą logiką:
-    - Sprawdzić pliki ze **wszystkich istniejących folderów `Sync_*`**
+    - Sprawdzić pliki ze **wszystkich istniejących folderów `Sync_*_<Phone_Name>`**
     - Jeśli plik o identycznej ścieżce i nazwie już istnieje:
       - Porównać **rozmiar** i **modTime** z telefonem
       - Jeśli rozmiar i modTime się zgadzają (modTime może się różnić o max. 1 sekundę) → plik już skopiowany, pominąć
-      - Jeśli rozmiar LUB modTime się różnią → **WARNING**: "Plik się zmienił na telefonie: [ścieżka/nazwa]", skopiować do najnowszego folderu `Sync_*`
-      - Jeśli plik nie istnieje w żadnym `Sync_*` → skopiować do najnowszego folderu `Sync_*`
+      - Jeśli rozmiar LUB modTime się różnią → **WARNING**: "Plik się zmienił na telefonie: [ścieżka/nazwa]", skopiować do najnowszego folderu `Sync_*_<Phone_Name>`
+      - Jeśli plik nie istnieje w żadnym `Sync_*_<Phone_Name>` → skopiować do najnowszego folderu `Sync_*_<Phone_Name>`
 
 ### 3. Struktura Docelowa
-- Przy każdym uruchomieniu program tworzy **nowy subfolder** w postaci `Sync_<timestamp>` w folderze docelowym
-- **Pełne ścieżki są zachowywane**: struktura folderów na telefonie jest odtworzona w `Sync_<timestamp>/`
+- Przy każdym uruchomieniu program tworzy **nowy subfolder** w postaci `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
+- **Pełne ścieżki są zachowywane**: struktura folderów na telefonie jest odtworzona w `Sync_<timestamp>_<Phone_Name>/`
 - Przykład:
   - Na telefonie: `/Pictures/Vacation/photo1.jpg`
-  - Na laptopie: `c:\Users\Wojtek\PhoneSync\Sync_20260909_143022\Pictures\Vacation\photo1.jpg`
+  - Na laptopie: `c:\Users\Wojtek\PhoneSync\Sync_20260909_143022_SM_A515F\Pictures\Vacation\photo1.jpg`
 
 ### 4. Obsługa Metadanych Plików
 - **Rozmiar pliku**: Odczyt rozmiaru w bajtach z telefonu
@@ -66,16 +66,16 @@ Program powinien pracować w środowisku Windows i współpracować z systemem p
   - **modTime** zgadza się z tolerancją **±1 sekunda**
   
 - Plik wymaga **nowego kopiowania** jeśli:
-  - Istnieje w `Sync_*` z tym samym path/nazwa ale **rozmiar się różni** LUB **modTime się różni o więcej niż 1 sekundę**
+  - Istnieje w `Sync_*_<Phone_Name>` z tym samym path/nazwa ale **rozmiar się różni** LUB **modTime się różni o więcej niż 1 sekundę**
   - Wyświetlić **WARNING**: `"Plik się zmienił na telefonie: [relative_path/nazwa_pliku]"`
-  - Skopiować go do **najnowszego folderu `Sync_*`** (z najnowszym timestamp'em)
+  - Skopiować go do **najnowszego folderu `Sync_*_<Phone_Name>`** (z najnowszym timestamp'em)
 
 ### 5. Bezpieczeństwo i Integracja USB
 - Telefon traktowany jako **read-only** - żadne operacje zapisu
 - Obsługa USB/MTP - przy braku wsparcia dla konkretnego wymagania szukać alternatywnych rozwiązań
 - Obsługa ścieżek relatywnych i bezwzględnych
 
-## ⚙️ Plik Konfiguracyjny
+## Plik Konfiguracyjny
 
 ### Lokalizacja
 Nazwa: `PhoneSync_config.yaml` (w głównym folderze programu)
@@ -98,21 +98,39 @@ excluded_folders:
 
 ## Przebieg Działania
 1. Program odczytuje plik konfiguracyjny `PhoneSync_config.yaml`
-2. Tworzy nowy subfolder `Sync_<timestamp>` w folderze docelowym
-3. Szuka telefonu podłączonego przez USB
+2. Szuka telefonu podłączonego przez USB
+   - Znajduje nazwę telefonu z systemu Android
+   - Normalizuje nazwę: zamienia wszystkie znaki nie-litery i nie-cyfry na `_`, usuwa powtarzające się `_`, trimuje `_` z obu końców
+   - Przygotowuje znormalizowaną nazwę do użycia w nazwie folderu
+3. Tworzy nowy subfolder `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
 4. Przeszukuje foldery wskazane w konfiguracji **recursively** (ze wszystkich podfolderów)
 5. Dla każdego znalezionego pliku:
-   - Sprawdza czy plik o identycznej ścieżce i nazwie istnieje w którymkolwiek z istniejących folderów `Sync_*`
+   - Sprawdza czy plik o identycznej ścieżce i nazwie istnieje w którymkolwiek z istniejących folderów `Sync_*_<Phone_Name>`
    - Jeśli **istnieje**:
      - Porównuje rozmiar i modTime
      - Jeśli rozmiar i modTime się zgadzają (modTime ±1 sekunda) → pominąć (już skopiowany)
-     - Jeśli rozmiar lub modTime się różnią → wyświetlić WARNING i skopiować do najnowszego `Sync_*`
-   - Jeśli **nie istnieje** w żadnym `Sync_*`:
+     - Jeśli rozmiar lub modTime się różnią → wyświetlić WARNING i skopiować do najnowszego `Sync_*_<Phone_Name>`
+   - Jeśli **nie istnieje** w żadnym `Sync_*_<Phone_Name>`:
      - Odczytuje rozmiar pliku i modTime z telefonu
-     - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>/`)
+     - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>_<Phone_Name>/`)
      - Po skopiowaniu ustawia modTime na laptopie do wartości odczytanej z telefonu
-     - Weryfikuje rozmiar pliku (musi się zgadzać dokładnie)
+     - **Weryfikuje rozmiar i modTime**: porównuje wartości na laptopie z wartościami na telefonie (rozmiar musi się zgadzać dokładnie, modTime ±1 sekunda)
+     - Jeśli weryfikacja się nie powiedzie → program się kończy z błędem: `"BŁĄD: Weryfikacja pliku [path/nazwa] nie powiodła się - rozmiar lub modTime się nie zgadzają"`
 6. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
+
+## Testowanie
+
+### Bezpieczne Testowanie Kopii Inkrementalnych
+- Podczas testowania kopii inkrementalnych należy postępować **ostrożnie** i testować na małych porcjach danych
+- W jednym kroku kopii skopiować **1-2 pliki** i dokładnie sprawdzić:
+  - Czy pliki zostały skopiowane do prawidłowego folderu `Sync_<timestamp>_<Phone_Name>/`
+  - Czy **rozmiar pliku** na laptopie **dokładnie zgadza się** z rozmiarem na telefonie (do bajtu)
+  - Czy **modTime (czas modyfikacji)** na laptopie zgadza się z czasem na telefonie (tolerancja ±1 sekunda)
+  - Czy struktura folderów jest prawidłowo zachowana
+- Po każdym testowym kroku przygotować nowe testy z plikami, które będą:
+  - Nowe (nie istniały w poprzednich kopiach)
+  - Zmodyfikowane (zmienić plik na telefonie i sprawdzić czy program go ponownie skopiuje)
+  - Takie same jak poprzednio (sprawdzić czy program je prawidłowo ominął)
 
 ## Uwagi Dodatkowe
 
@@ -126,11 +144,6 @@ excluded_folders:
 - Na tym etapie specyfikacji nie ma wymagań dotyczących interfejsu użytkownika (CLI czy GUI)
 - Telefon musi pozostać read-only - żadne operacje zapisu na telefonie
 - Dokładność czasu modyfikacji plików do sekundy
-
-### Przyszłe Rozszerzenia
-- Brak wymagań dotyczących synchronizacji dwukierunkowej
-- Brak wymagań dotyczących usuwania duplikatów
-- Brak wymagań dotyczących kompresji czy transformacji plików
 
 ---
 **Data utworzenia:** 2026-09-09  

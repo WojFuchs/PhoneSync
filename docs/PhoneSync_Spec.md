@@ -104,21 +104,20 @@ excluded_folders:
    - Normalizuje nazwę: zamienia wszystkie znaki nie-litery i nie-cyfry na `_`, usuwa powtarzające się `_`, trimuje `_` z obu końców
    - Przygotowuje znormalizowaną nazwę do użycia w nazwie folderu
 3. Tworzy nowy subfolder `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
-4. **Skanuje foldery na telefonie folder po folderze**:
+4. **Skanuje foldery na telefonie folder po folderze z wbudowanym limitowaniem**:
    - Jeśli `phone_folders` jest pusta/pominięta → skanuje cały telefon od root (`/`)
    - Pomija foldery wymienione w `excluded_folders`
    - **W każdym folderze indywidualnie sortuje pliki po modTime** (od najstarszych do najnowszych)
-5. Dla każdego pliku (w kolejności: folder po folderze, a w ramach folderu od najstarszych):
-   - Sprawdza czy plik o identycznej ścieżce i nazwie istnieje w którymkolwiek z istniejących folderów `Sync_*_<Phone_Name>`
-   - Jeśli **istnieje**:
-     - Porównuje rozmiar i modTime
-     - Jeśli rozmiar i modTime się zgadzają (modTime ±1 sekunda) → **pominąć** (już skopiowany)
-     - Jeśli rozmiar lub modTime się różnią → wyświetlić **WARNING** i **dodać do listy do skopiowania**
-   - Jeśli **nie istnieje** w żadnym `Sync_*_<Phone_Name>` → **dodać do listy do skopiowania**
-6. **Limitowanie i wczesne zatrzymanie skanowania**: 
-   - Jeśli `max_files_per_sync` jest ustawiony (w konfigu lub CLI), program zbiera pliki do skopiowania
-   - Gdy liczba plików do skopiowania osiągnie limit → **Program przerywa skanowanie kolejnych folderów**
-   - Loguje informację ile plików pozostało nieskanowanych (mogą być przetwarzane w następnym uruchomieniu)
+5. **Podczas skanowania każdego folderu**: dla każdego pliku (w porządku sortowania):
+   - **Natychmiast sprawdza czy plik się kwalifikuje do inkrementalnego kopiowania**:
+     - Jeśli plik **już istnieje i nie zmienił się** → pominąć (skip)
+     - Jeśli plik **już istnieje ale zmienił się** (rozmiar lub modTime) → dodać do listy do kopii
+     - Jeśli plik **nie istnieje** → dodać do listy do kopii
+6. **Przerwanie skanowania na limicie**:
+   - Jeśli `max_files_per_sync` jest ustawiony → program zbiera pliki do kopii podczas skanowania
+   - Gdy liczba plików do kopii osiągnie limit → **Program natychmiast przerywa skanowanie pozostałych folderów**
+   - Loguje ile plików do kopii zebrano i co pozostało nieskanowane
+   - **To znacznie oszczędza czas testowania** - nie skanuje całego telefonu
 7. Dla każdego pliku z listy do skopiowania:
    - Odczytuje rozmiar pliku i modTime z telefonu
    - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>_<Phone_Name>/`)
@@ -162,10 +161,13 @@ python main.py PhoneSync_config.yaml 5
   3. Po każdej iteracji zwiększać limit: `python main.py PhoneSync_config.yaml 5`, potem `10`, itd.
   4. Dopiero po potwierdzeniu że logika działa - uruchomić bez limitu: `python main.py` (skopiuje wszystkie)
 
-- **Ważne: Program przerywa skanowanie**
-  - Gdy osiągnie limit plików do skopiowania - **program przerwie skanowanie kolejnych folderów**
-  - Loguje ile plików pozostało nieskanowanych (`"Stopped early - X files remaining not scanned"`)
-  - To znacznie oszczędza czas testowania, bo nie skanuje całego telefonu
+- **Ważne: Program przerywa skanowanie PODCZAS skanowania**
+  - Program skanuje telefon folder po folderze
+  - Dla każdego pliku sprawdza czy się kwalifikuje do kopii (inkrementalne sprawdzenie)
+  - Gdy osiągnie limit plików do skopiowania - **program natychmiast przerywa skanowanie pozostałych folderów**
+  - Loguje informacje:
+    - `"Reached copy limit during scan: X files collected"` 
+  - To jest **bardzo ważne** dla wydajności testów - nie skanuje całego telefonu!
   - W następnym uruchomieniu z limitem będzie skanować od nowa i zbierze kolejne pliki
 
 - **Co weryfikować podczas testowania:**
@@ -178,8 +180,8 @@ python main.py PhoneSync_config.yaml 5
   - Czy log pokazuje że program wczesnie przerwał skanowanie (jeśli było co skanować dalej)
 
 - **Scenariusze testowe**:
-  1. **Pierwsze uruchomienie z limitem**: Skopiować 3-5 plików, sprawdzić czy się prawidłowo skopiowały
-  2. **Drugie uruchomienie z tym samym limitem**: Sprawdzić że poprzednie pliki są pomijane ("already synced"), skopiować następne 3-5. Log powinien pokazać że skanowanie zostało przerwane.
+  1. **Pierwsze uruchomienie z limitem**: Skopiować 3-5 plików, sprawdzić czy się prawidłowo skopiowały. Log powinien pokazać `"Reached copy limit during scan"`.
+  2. **Drugie uruchomienie z tym samym limitem**: Sprawdzić że poprzednie pliki są pomijane ("already synced"). Powinny zostać skopiowane kolejne 3-5 plików.
   3. **Zmiana pliku na telefonie**: Zmienić jeden z już skopiowanych plików, uruchomić program - powinien pokazać WARNING i skopiować zmieniony plik
   4. **Pełne kopiowanie**: Po potwierdzeniu logiki - uruchomić bez limitu
 

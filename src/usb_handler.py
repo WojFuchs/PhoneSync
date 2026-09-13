@@ -34,25 +34,42 @@ class USBScanner:
     def __init__(self, device: AndroidDevice):
         self.device = device
     
-    def find_all_files(self, folder_paths: List[str], excluded_folders: List[str]) -> List[Dict[str, Any]]:
+    def find_files_for_copying(self, folder_paths: List[str], excluded_folders: List[str], 
+                               validator_callback, max_results: int = None) -> List[Dict[str, Any]]:
         """
-        Find all files recursively in given folders on phone.
-        If folder_paths is empty, scans entire phone ("/").
-        Files are sorted within each folder by modtime (oldest first).
-        Returns list of dicts with file metadata: {path, name, size, modtime, folder}.
-        """
-        all_files = []
+        Scan phone folders and collect files to copy until limit is reached.
+        Uses validator_callback to check each file if it should be copied.
+        Stops scanning when max_results is reached to save time.
         
+        Args:
+            folder_paths: List of folders to scan (or empty for entire phone)
+            excluded_folders: List of folders to skip
+            validator_callback: Function(file_info) -> bool, returns True if file should be copied
+            max_results: Max files to collect before stopping (None = no limit)
+        
+        Returns:
+            List of files that should be copied
+        """
+        files_to_copy = []
         folders_to_scan = folder_paths if folder_paths else ["/"]
         
         for folder in folders_to_scan:
+            # Scan folder and collect files that should be copied
             files = self._scan_folder_recursive(folder, excluded_folders)
             # Sort files within folder by modtime (oldest first)
             files_sorted = sorted(files, key=lambda x: x.get('modtime', 0))
-            all_files.extend(files_sorted)
+            
+            for file_info in files_sorted:
+                if validator_callback(file_info):
+                    files_to_copy.append(file_info)
+                    
+                    # Stop if we reached the limit
+                    if max_results is not None and len(files_to_copy) >= max_results:
+                        logger.info(f"Reached copy limit during scan: {len(files_to_copy)} files collected")
+                        return files_to_copy
         
-        logger.info(f"Found {len(all_files)} files on phone")
-        return all_files
+        logger.info(f"Collected {len(files_to_copy)} files to copy from phone")
+        return files_to_copy
     
     def _scan_folder_recursive(self, folder: str, excluded_folders: List[str]) -> List[Dict[str, Any]]:
         """Recursively scan folder on phone for files."""

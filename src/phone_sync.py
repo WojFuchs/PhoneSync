@@ -82,31 +82,20 @@ class PhoneSync:
         
         scanner = USBScanner(device)
         
-        # Scan folders - files already sorted by folder and by modtime within each folder
-        phone_files = scanner.find_all_files(self.phone_folders, self.excluded_folders)
-        logger.info(f"Found {len(phone_files)} files to scan")
+        # Scan folders for files to copy - scanning stops when limit is reached
+        # Pass callback to validate each file during scanning (checks incremental state)
+        files_to_copy = scanner.find_files_for_copying(
+            self.phone_folders, 
+            self.excluded_folders,
+            lambda file_info: self._should_copy_file(file_info, existing_folders),
+            self.max_files_per_sync
+        )
         
-        if not phone_files:
-            logger.warning("No files found on phone")
+        logger.info(f"Ready to copy {len(files_to_copy)} files from phone")
+        
+        if not files_to_copy:
+            logger.warning("No new files to copy")
             return True
-        
-        # Process files and collect those that need copying
-        # Stop processing when reaching copy limit to avoid unnecessary scanning
-        files_to_copy = []
-        files_scanned = 0
-        
-        for file_info in phone_files:
-            files_scanned += 1
-            
-            if self._should_copy_file(file_info, existing_folders):
-                files_to_copy.append(file_info)
-                
-                # Check if we reached the limit of files to copy
-                if self.max_files_per_sync is not None and len(files_to_copy) >= self.max_files_per_sync:
-                    logger.info(f"Reached copy limit: {self.max_files_per_sync} files to copy (scanned {files_scanned} files)")
-                    if files_scanned < len(phone_files):
-                        logger.info(f"Stopped early - {len(phone_files) - files_scanned} files remaining not scanned")
-                    break
         
         # Now actually copy the files
         for file_info in files_to_copy:

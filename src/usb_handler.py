@@ -80,7 +80,7 @@ class USBScanner:
             result = subprocess.run(mtp_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                logger.warning(f"Could not scan folder {folder}: {result.stderr}")
+                logger.warning(f"WARNING: Could not scan folder {folder}: {result.stderr}")
                 return files
             
             lines = result.stdout.strip().split('\n')
@@ -109,7 +109,7 @@ class USBScanner:
                         files.append(file_info)
         
         except Exception as e:
-            logger.error(f"Error scanning folder {folder}: {e}")
+            logger.error(f"ERROR: Error scanning folder {folder}: {e}")
         
         return files
     
@@ -131,7 +131,7 @@ class USBScanner:
                 'folder': folder
             }
         except (ValueError, IndexError) as e:
-            logger.warning(f"Could not parse file info for {name}: {e}")
+            logger.warning(f"WARNING: Could not parse file info for {name}: {e}")
             return None
 
 
@@ -141,7 +141,7 @@ def find_connected_device() -> Optional[AndroidDevice]:
         result = subprocess.run(['mtp-detect'], capture_output=True, text=True, timeout=5)
         
         if result.returncode != 0:
-            logger.warning("No MTP device detected")
+            logger.warning("WARNING: No MTP device detected")
             return None
         
         for line in result.stdout.split('\n'):
@@ -152,9 +152,9 @@ def find_connected_device() -> Optional[AndroidDevice]:
                 logger.info(f"Found Android device: {device_name}")
                 return AndroidDevice(device_path, device_name)
         
-        logger.warning("No Android device found in MTP detection")
+        logger.warning("WARNING: No Android device found in MTP detection")
         return None
     
     except Exception as e:
-        logger.error(f"Error detecting MTP device: {e}")
+        logger.error(f"ERROR: Error detecting MTP device: {e}")
         return None

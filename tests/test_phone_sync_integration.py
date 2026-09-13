@@ -51,15 +51,18 @@ excluded_folders:
         return device
     
     def _create_mock_files(self, count=10):
-        """Create list of mock file info dicts."""
+        """Create list of mock file info dicts with 1 byte size and random modtime from past."""
         files = []
+        # Base time: 1 year ago
+        base_time = int(time.time()) - (365 * 24 * 3600)
         for i in range(count):
+            # Each file has 1 byte, and modtime spread over time (every hour)
             files.append({
                 'path': f'/DCIM/IMG_{i:04d}.jpg',
                 'name': f'IMG_{i:04d}.jpg',
-                'size': 1024 * (i + 1),  # Different sizes
+                'size': 1,  # 1 byte
                 'folder': '/DCIM',
-                'modtime': 1000000 + i  # Different mtimes
+                'modtime': base_time + (i * 3600)  # Spread by 1 hour each
             })
         return files
     
@@ -103,8 +106,12 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - timestamp is created inside setup_logging()
+        # Setup real logging - returns log_file only (timestamp is in the filename)
         log_file = setup_logging(str(self.real_dest_folder))
+        
+        # Verify initial log file exists without phone name
+        initial_log = log_file
+        self.assertTrue(initial_log.exists(), f"Initial log file should exist at {initial_log}")
         
         # Run PhoneSync with max_files_per_sync=3
         sync = PhoneSync(
@@ -113,20 +120,21 @@ excluded_folders:
             log_file=log_file
         )
         
-        # Extract timestamp from log_file name for folder path
-        sync_timestamp = log_file.stem.split('_')[1] + '_' + log_file.stem.split('_')[2]
+        # Extract timestamp from log_file name for sync folder path
+        parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
+        sync_timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else datetime.now().strftime("%Y%m%d_%H%M%S")
         sync_folder_path = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77"
         
         with patch.object(sync.file_manager, 'find_existing_sync_folders', return_value=[]):
             with patch.object(sync.file_manager, 'create_sync_folder', return_value=sync_folder_path):
-                # Mock _copy_file to create real files
-                def mock_copy(file_info, folder, device):
-                    rel_path = file_info['path'].lstrip('/')
-                    dest_file = folder / rel_path
+                # Mock copy_file_from_phone to create real files (let _copy_file and logging work naturally)
+                def mock_copy_from_phone(file_relative_path, dest_folder, device_path, phone_file_path):
+                    dest_file = dest_folder / file_relative_path
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    dest_file.write_bytes(b'mock file content')
+                    dest_file.write_bytes(b'x')  # 1 byte
+                    return True
                 
-                with patch.object(sync, '_copy_file', side_effect=mock_copy):
+                with patch.object(sync.file_manager, 'copy_file_from_phone', side_effect=mock_copy_from_phone):
                     result = sync.run()
         
         # Verify: should have returned early with 3 files
@@ -174,7 +182,7 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - timestamp is created inside setup_logging()
+        # Setup real logging - returns log_file only (timestamp is in the filename)
         log_file = setup_logging(str(self.real_dest_folder))
         
         sync = PhoneSync(
@@ -183,28 +191,26 @@ excluded_folders:
             log_file=log_file
         )
         
-        # Extract timestamp from log_file name for folder path
-        sync_timestamp = log_file.stem.split('_')[1] + '_' + log_file.stem.split('_')[2]
+        # Extract timestamp from log_file name for sync folder path
+        parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
+        sync_timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else datetime.now().strftime("%Y%m%d_%H%M%S")
         sync_folder_path = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77"
         
         with patch.object(sync.file_manager, 'find_existing_sync_folders', return_value=[]):
             with patch.object(sync.file_manager, 'create_sync_folder', return_value=sync_folder_path):
-                # Count how many times _copy_file would be called and create files
-                copy_count = 0
-                def mock_copy(file_info, folder, device):
-                    nonlocal copy_count
-                    copy_count += 1
-                    rel_path = file_info['path'].lstrip('/')
-                    dest_file = folder / rel_path
+                # Mock copy_file_from_phone to create real files (let _copy_file and logging work naturally)
+                def mock_copy_from_phone(file_relative_path, dest_folder, device_path, phone_file_path):
+                    dest_file = dest_folder / file_relative_path
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    dest_file.write_bytes(b'mock file content')
+                    dest_file.write_bytes(b'x')  # 1 byte
+                    return True
                 
-                with patch.object(sync, '_copy_file', side_effect=mock_copy):
+                with patch.object(sync.file_manager, 'copy_file_from_phone', side_effect=mock_copy_from_phone):
                     result = sync.run()
         
         # Verify exactly 5 files were prepared for copying
         self.assertTrue(result)
-        self.assertEqual(copy_count, 5, f"Expected 5 files to copy, but got {copy_count}")
+        self.assertEqual(sync.files_copied, 5, f"Expected 5 files to copy, but got {sync.files_copied}")
         
         # Verify log file was created with phone name (NO old file without phone name)
         expected_log = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77.log"
@@ -248,7 +254,7 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - timestamp is created inside setup_logging()
+        # Setup real logging - returns log_file only (timestamp is in the filename)
         log_file = setup_logging(str(self.real_dest_folder))
         
         # No max_files_per_sync limit
@@ -258,27 +264,26 @@ excluded_folders:
             log_file=log_file
         )
         
-        # Extract timestamp from log_file name for folder path
-        sync_timestamp = log_file.stem.split('_')[1] + '_' + log_file.stem.split('_')[2]
+        # Extract timestamp from log_file name for sync folder path
+        parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
+        sync_timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else datetime.now().strftime("%Y%m%d_%H%M%S")
         sync_folder_path = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77"
         
         with patch.object(sync.file_manager, 'find_existing_sync_folders', return_value=[]):
             with patch.object(sync.file_manager, 'create_sync_folder', return_value=sync_folder_path):
-                copy_count = 0
-                def mock_copy(file_info, folder, device):
-                    nonlocal copy_count
-                    copy_count += 1
-                    rel_path = file_info['path'].lstrip('/')
-                    dest_file = folder / rel_path
+                # Mock copy_file_from_phone to create real files (let _copy_file and logging work naturally)
+                def mock_copy_from_phone(file_relative_path, dest_folder, device_path, phone_file_path):
+                    dest_file = dest_folder / file_relative_path
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    dest_file.write_bytes(b'mock file content')
+                    dest_file.write_bytes(b'x')  # 1 byte
+                    return True
                 
-                with patch.object(sync, '_copy_file', side_effect=mock_copy):
+                with patch.object(sync.file_manager, 'copy_file_from_phone', side_effect=mock_copy_from_phone):
                     result = sync.run()
         
         # Verify all 10 files were prepared for copying
         self.assertTrue(result)
-        self.assertEqual(copy_count, 10, f"Expected 10 files to copy, but got {copy_count}")
+        self.assertEqual(sync.files_copied, 10, f"Expected 10 files to copy, but got {sync.files_copied}")
         
         # Verify log file was created (NO old file without phone name)
         expected_log = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77.log"
@@ -291,27 +296,6 @@ excluded_folders:
         log_content = expected_log.read_text()
         self.assertIn("Test_Phone_77", log_content)
         self.assertNotIn("Reached copy limit", log_content)  # Should NOT have limit message
-    
-    @patch('src.phone_sync.find_connected_device')
-    @patch('src.phone_sync.USBScanner')
-    def test_incremental_logic_skips_unchanged_files(self, mock_scanner_class, mock_find_device):
-        """Test that already copied files are skipped in incremental sync.
-        Creates real logs in c:/Users/Wojtek/PhoneSync/TEST_INTEGRATION/
-        """
-        device = self._create_mock_device(test_id=4)
-        mock_find_device.return_value = device
-        
-        phone_files = self._create_mock_files(count=5)
-        
-        mock_scanner = Mock()
-        mock_scanner_class.return_value = mock_scanner
-        
-        def mock_find_files_for_copying(folders, excluded, validator, max_results):
-            files_to_copy = []
-            for file_info in phone_files:
-                if validator(file_info):
-                    files_to_copy.append(file_info)
-            return files_to_copy
     
     @patch('src.phone_sync.find_connected_device')
     @patch('src.phone_sync.USBScanner')
@@ -339,7 +323,7 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - timestamp is created inside setup_logging()
+        # Setup real logging - returns log_file only (timestamp is in the filename)
         log_file = setup_logging(str(self.real_dest_folder))
         
         sync = PhoneSync(
@@ -348,27 +332,26 @@ excluded_folders:
             log_file=log_file
         )
         
-        # Extract timestamp from log_file name for folder path
-        sync_timestamp = log_file.stem.split('_')[1] + '_' + log_file.stem.split('_')[2]
+        # Extract timestamp from log_file name for sync folder path
+        parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
+        sync_timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else datetime.now().strftime("%Y%m%d_%H%M%S")
         sync_folder_path = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77"
         
         with patch.object(sync.file_manager, 'find_existing_sync_folders', return_value=[]):
             with patch.object(sync.file_manager, 'create_sync_folder', return_value=sync_folder_path):
-                copy_count = 0
-                def mock_copy(file_info, folder, device):
-                    nonlocal copy_count
-                    copy_count += 1
-                    rel_path = file_info['path'].lstrip('/')
-                    dest_file = folder / rel_path
+                # Mock copy_file_from_phone to create real files (let _copy_file and logging work naturally)
+                def mock_copy_from_phone(file_relative_path, dest_folder, device_path, phone_file_path):
+                    dest_file = dest_folder / file_relative_path
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
-                    dest_file.write_bytes(b'mock file content')
+                    dest_file.write_bytes(b'x')  # 1 byte
+                    return True
                 
-                with patch.object(sync, '_copy_file', side_effect=mock_copy):
+                with patch.object(sync.file_manager, 'copy_file_from_phone', side_effect=mock_copy_from_phone):
                     result = sync.run()
         
         # Verify all 5 files were prepared for copying (no files exist yet)
         self.assertTrue(result)
-        self.assertEqual(copy_count, 5, f"Expected 5 files to copy on first run, but got {copy_count}")
+        self.assertEqual(sync.files_copied, 5, f"Expected 5 files to copy on first run, but got {sync.files_copied}")
         
         # Verify log file was created (NO old file without phone name)
         expected_log = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77.log"
@@ -380,6 +363,89 @@ excluded_folders:
         # Verify log content
         log_content = expected_log.read_text()
         self.assertIn("Test_Phone_77", log_content)
+
+    @patch('src.phone_sync.find_connected_device')
+    @patch('src.phone_sync.USBScanner')
+    def test_log_file_rename_before_and_after_phone_detection(self, mock_scanner_class, mock_find_device):
+        """Test that log file is created initially without phone name, 
+        then renamed with phone name after detection.
+        Verifies old log file doesn't exist and new one does.
+        """
+        # Wait 1 second to ensure unique timestamp
+        time.sleep(1)
+        
+        device = self._create_mock_device()
+        mock_find_device.return_value = device
+        
+        phone_files = self._create_mock_files(count=2)
+        
+        mock_scanner = Mock()
+        mock_scanner_class.return_value = mock_scanner
+        
+        def mock_find_files_for_copying(folders, excluded, validator, max_results):
+            files_to_copy = []
+            for file_info in phone_files:
+                if validator(file_info):
+                    files_to_copy.append(file_info)
+            return files_to_copy
+        
+        mock_scanner.find_files_for_copying = mock_find_files_for_copying
+        
+        # Setup real logging - returns log_file only (timestamp is in the filename)
+        log_file = setup_logging(str(self.real_dest_folder))
+        
+        # Verify initial log file exists without phone name
+        initial_log = log_file
+        self.assertTrue(initial_log.exists(), f"Initial log file should exist at {initial_log}")
+        
+        # Verify it doesn't have phone name in it yet
+        initial_log_name = initial_log.name
+        self.assertNotIn("Test_Phone_77", initial_log_name, 
+                        f"Initial log file should NOT have phone name, got: {initial_log_name}")
+        
+        sync = PhoneSync(
+            config_path=str(self.config_path),
+            max_files_per_sync_param=None,
+            log_file=log_file
+        )
+        
+        # Extract timestamp from log_file name for sync folder path
+        parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
+        sync_timestamp = f"{parts[1]}_{parts[2]}" if len(parts) >= 3 else datetime.now().strftime("%Y%m%d_%H%M%S")
+        sync_folder_path = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77"
+        
+        with patch.object(sync.file_manager, 'find_existing_sync_folders', return_value=[]):
+            with patch.object(sync.file_manager, 'create_sync_folder', return_value=sync_folder_path):
+                # Mock copy_file_from_phone to create real files (let _copy_file and logging work naturally)
+                def mock_copy_from_phone(file_relative_path, dest_folder, device_path, phone_file_path):
+                    dest_file = dest_folder / file_relative_path
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    dest_file.write_bytes(b'x')  # 1 byte
+                    return True
+                
+                with patch.object(sync.file_manager, 'copy_file_from_phone', side_effect=mock_copy_from_phone):
+                    result = sync.run()
+        
+        # After run(), verify log file was renamed
+        final_log = sync.log_file
+        
+        # Verify old log file WITHOUT phone name does NOT exist
+        old_log = self.real_dest_folder / f"Sync_{sync_timestamp}.log"
+        self.assertFalse(old_log.exists(), 
+                        f"Old log file without phone name should NOT exist at {old_log}")
+        
+        # Verify new log file WITH phone name DOES exist
+        expected_log = self.real_dest_folder / f"Sync_{sync_timestamp}_Test_Phone_77.log"
+        self.assertTrue(expected_log.exists(), 
+                       f"New log file with phone name should exist at {expected_log}")
+        
+        # Verify final_log points to the renamed file
+        self.assertEqual(final_log, expected_log, 
+                        f"sync.log_file should point to renamed log, expected {expected_log}, got {final_log}")
+        
+        # Verify the log content contains phone name
+        log_content = expected_log.read_text()
+        self.assertIn("Test_Phone_77", log_content, "Log should contain phone name")
 
 
 if __name__ == '__main__':

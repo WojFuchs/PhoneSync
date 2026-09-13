@@ -53,9 +53,8 @@ class LocalFileManager:
         """Set file modification time (in seconds since epoch)."""
         try:
             os.utime(file_path, (modtime, modtime))
-            logger.debug(f"Set modtime for {file_path}: {modtime}")
         except Exception as e:
-            logger.error(f"Failed to set modtime for {file_path}: {e}")
+            logger.error(f"ERROR: Failed to set modtime for {file_path}: {e}")
             raise
     
     def copy_file_from_phone(self, file_relative_path: str, dest_folder: Path, 
@@ -69,14 +68,13 @@ class LocalFileManager:
             result = subprocess.run(mtp_cmd, shell=True, capture_output=True, text=True)
             
             if result.returncode != 0:
-                logger.error(f"Failed to copy file from phone: {result.stderr}")
+                logger.error(f"ERROR: Failed to copy file from phone: {result.stderr}")
                 return False
             
-            logger.info(f"Copied file: {file_relative_path}")
             return True
         
         except Exception as e:
-            logger.error(f"Error copying file {file_relative_path}: {e}")
+            logger.error(f"ERROR: Error copying file {file_relative_path}: {e}")
             return False
     
     def verify_copied_file(self, dest_file: Path, expected_size: int, 

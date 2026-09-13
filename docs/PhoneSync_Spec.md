@@ -99,32 +99,37 @@ excluded_folders:
 
 ## Przebieg Działania
 1. Program odczytuje plik konfiguracyjny `PhoneSync_config.yaml` (oraz opcjonalnie pobiera `max_files_per_sync` z linii poleceń)
-2. Szuka telefonu podłączonego przez USB
+2. **Automatycznie tworzy timestamp startowy** (`YYYYMMdd_HHMMSS`) - ten sam timestamp jest używany dla logów i folderu sync
+   - Format timestamp: `20260913_143022`
+   - Wszystkie artefakty z tego uruchomienia (plik logu, folder sync) używają tego samego timestamp'a
+   - **WAŻNE**: Timestamp jest tworzony automatycznie w momencie startu programu - nie jest nigdzie przekazywany jako parametr
+3. Szuka telefonu podłączonego przez USB
    - Znajduje nazwę telefonu z systemu Android
    - Normalizuje nazwę: zamienia wszystkie znaki nie-litery i nie-cyfry na `_`, usuwa powtarzające się `_`, trimuje `_` z obu końców
    - Przygotowuje znormalizowaną nazwę do użycia w nazwie folderu
-3. Tworzy nowy subfolder `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
-4. **Skanuje foldery na telefonie folder po folderze z wbudowanym limitowaniem**:
+4. Tworzy nowy subfolder `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
+   - Np.: `Sync_20260913_143022_SM_A515F` gdzie timestamp był wygenerowany przy starcie
+5. **Skanuje foldery na telefonie folder po folderze z wbudowanym limitowaniem**:
    - Jeśli `phone_folders` jest pusta/pominięta → skanuje cały telefon od root (`/`)
    - Pomija foldery wymienione w `excluded_folders`
    - **W każdym folderze indywidualnie sortuje pliki po modTime** (od najstarszych do najnowszych)
-5. **Podczas skanowania każdego folderu**: dla każdego pliku (w porządku sortowania):
+6. **Podczas skanowania każdego folderu**: dla każdego pliku (w porządku sortowania):
    - **Natychmiast sprawdza czy plik się kwalifikuje do inkrementalnego kopiowania**:
      - Jeśli plik **już istnieje i nie zmienił się** → pominąć (skip)
      - Jeśli plik **już istnieje ale zmienił się** (rozmiar lub modTime) → dodać do listy do kopii
      - Jeśli plik **nie istnieje** → dodać do listy do kopii
-6. **Przerwanie skanowania na limicie**:
+7. **Przerwanie skanowania na limicie**:
    - Jeśli `max_files_per_sync` jest ustawiony → program zbiera pliki do kopii podczas skanowania
    - Gdy liczba plików do kopii osiągnie limit → **Program natychmiast przerywa skanowanie pozostałych folderów**
    - Loguje ile plików do kopii zebrano i co pozostało nieskanowane
    - **To znacznie oszczędza czas testowania** - nie skanuje całego telefonu
-7. Dla każdego pliku z listy do skopiowania:
+8. Dla każdego pliku z listy do skopiowania:
    - Odczytuje rozmiar pliku i modTime z telefonu
    - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>_<Phone_Name>/`)
    - Po skopiowaniu ustawia modTime na laptopie do wartości odczytanej z telefonu
    - **Weryfikuje rozmiar i modTime**: porównuje wartości na laptopie z wartościami na telefonie (rozmiar musi się zgadzać dokładnie, modTime ±1 sekunda)
    - Jeśli weryfikacja się nie powiedzie → program się kończy z błędem: `"BŁĄD: Weryfikacja pliku [path/nazwa] nie powiodła się - rozmiar lub modTime się nie zgadzają"`
-8. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
+9. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
 
 ## Uruchamianie Programu
 
@@ -191,6 +196,41 @@ python main.py PhoneSync_config.yaml 5
 - Zarejestrować czas działania dla potrzeb optymalizacji jeśli zajdzie potrzeba
 
 ## Uwagi Dodatkowe
+
+### Format Pliku Logu
+
+**Lokalizacja i nazewnictwo:**
+- Plik logu: `Sync_<timestamp>.log` → `Sync_<timestamp>_<Phone_Name>.log` (po wykryciu telefonu)
+- Lokalizacja: główny folder docelowy konfigu (bieżące uruchomienie, nie w folderze sync)
+- Nowy plik logu tworzy się za każdym uruchomieniem programu
+
+**Format logowania:**
+```
+2026-09-13 20:41:30,184 - PhoneSync sync operation started
+2026-09-13 20:41:30,184 - Found phone: Test_Phone_77 (normalized: Test_Phone_77)
+2026-09-13 20:41:30,187 - Ready to copy 10 files from phone
+2026-09-13 20:41:30,192 - File Copied: modtime: 2025-09-13 20:41:30 / path: DCIM/IMG_0000.jpg / size: 1 bytes
+2026-09-13 20:41:30,194 - File Copied: modtime: 2025-09-13 21:41:30 / path: DCIM/IMG_0001.jpg / size: 1 bytes
+...
+2026-09-13 20:41:30,216 - ======================================================
+2026-09-13 20:41:30,216 - SYNC SUMMARY
+2026-09-13 20:41:30,216 - Files copied: 10
+2026-09-13 20:41:30,216 - Files skipped (unchanged): 0
+2026-09-13 20:41:30,216 - No errors
+2026-09-13 20:41:30,216 - PhoneSync sync operation completed successfully
+```
+
+**Interpretacja logów:**
+- `File Copied: modtime: YYYY-MM-DD HH:MM:SS / path: <relative_path> / size: <bytes> bytes` - plik pomyślnie skopiowany z zachowaniem metadanych
+- `SYNC SUMMARY` - podsumowanie operacji: liczba skopiowanych plików, liczba pominiętych plików (nie zmieniały się), ewentualne błędy
+- Brak linii INFO level (`[INFO]`, `[DEBUG]`) w logach - wszystko to operacyjne komunikaty
+- WARNING i ERROR pojawiają się jako prefix w wiadomości, np. `WARNING: ...`, `ERROR: ...`
+
+### Timestamp - Ważne Notatki
+- **Timestamp jest tworzony automatycznie** w momencie startu programu (w funkcji `setup_logging()`)
+- **Jeden timestamp dla całego uruchomienia** - używany zarówno dla nazwy pliku logu jak i nazwy folderu sync
+- **Timestamp NIE jest nigdzie przekazywany jako parametr** - jest ekstraktowany z nazwy pliku logu gdy programowi potrzebny
+- To gwarantuje, że wszystkie artefakty z jednego uruchomienia (plik logu, folder sync, zawartość logów) mają ten sam punkt czasowy odniesienia
 
 ### Technologia i Integracja
 - Pierwotnie preferowane: MTP (Media Transfer Protocol)

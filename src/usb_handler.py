@@ -94,10 +94,10 @@ class USBScanner:
         """Extract file metadata from mtp-ls output line."""
         try:
             parts = line.split()
-            if len(parts) < 5:
+            if len(parts) < 2:
                 return None
             
-            size = int(parts[3])
+            size = int(parts[-1])
             
             file_path = f"{folder}/{name}"
             

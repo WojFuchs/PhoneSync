@@ -2,19 +2,24 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 from datetime import datetime
+import os
 
 from src.config import load_config, validate_config
 from src.usb_handler import find_connected_device, USBScanner
 from src.file_manager import LocalFileManager
 
 
-def setup_logging(destination_folder: str, sync_timestamp: str) -> Path:
-    """Setup logging to both console and file in destination folder."""
+def setup_logging(destination_folder: str) -> Path:
+    """Setup logging to both console and file in destination folder.
+    
+    Creates log file with timestamp in format: Sync_YYYYMMdd_HHMMSS.log
+    """
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     
     dest_path = Path(destination_folder)
     dest_path.mkdir(parents=True, exist_ok=True)
     
+    sync_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = dest_path / f"Sync_{sync_timestamp}.log"
     
     root_logger = logging.getLogger()
@@ -37,14 +42,60 @@ def setup_logging(destination_folder: str, sync_timestamp: str) -> Path:
     return log_file
 
 
+def rename_log_file(log_file: Path, phone_normalized_name: str) -> Path:
+    """Rename log file to include phone name once it's known.
+    
+    Renames from: Sync_<timestamp>.log
+    To: Sync_<timestamp>_<phone_name>.log
+    
+    Timestamp format: YYYYMMdd_HHMMSS
+    """
+    if not log_file.exists():
+        return log_file
+    
+    # Extract timestamp from filename
+    # stem is like "Sync_20260913_142742"
+    parts = log_file.stem.split('_')  # ["Sync", "20260913", "142742"]
+    if len(parts) < 3:
+        return log_file
+    
+    timestamp = f"{parts[1]}_{parts[2]}"  # "20260913_142742"
+    new_log_file = log_file.parent / f"Sync_{timestamp}_{phone_normalized_name}.log"
+    
+    # Close all file handlers before renaming
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            root_logger.removeHandler(handler)
+    
+    # Rename the file - remove destination if it exists (Windows compatibility)
+    try:
+        if new_log_file.exists():
+            new_log_file.unlink()
+        os.rename(log_file, new_log_file)
+        
+        # Re-add file handler with new path
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        file_handler = logging.FileHandler(new_log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(log_format))
+        root_logger.addHandler(file_handler)
+        
+        return new_log_file
+    except Exception as e:
+        logger.warning(f"Could not rename log file: {e}")
+        return log_file
+
+
 logger = logging.getLogger(__name__)
 
 
 class PhoneSync:
     """Main PhoneSync orchestrator."""
     
-    def __init__(self, config_path: str = "PhoneSync_config.yaml", sync_timestamp: str = "", 
-                 max_files_per_sync_param: int = None):
+    def __init__(self, config_path: str = "PhoneSync_config.yaml", 
+                 max_files_per_sync_param: int = None, log_file: Path = None):
         self.config = load_config(config_path)
         
         if not validate_config(self.config):
@@ -57,7 +108,7 @@ class PhoneSync:
         # Command-line parameter takes precedence over config
         self.max_files_per_sync = max_files_per_sync_param if max_files_per_sync_param is not None else self.config.get('max_files_per_sync')
         
-        self.sync_timestamp = sync_timestamp
+        self.log_file = log_file
         
         self.file_manager = LocalFileManager(self.destination_folder)
         self.files_copied = 0
@@ -77,7 +128,11 @@ class PhoneSync:
         
         logger.info(f"Found phone: {device.device_name} (normalized: {device.normalized_name})")
         
-        sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
+        # Rename log file to include phone name now that we know it
+        if self.log_file:
+            self.log_file = rename_log_file(self.log_file, device.normalized_name)
+        
+        sync_folder = self.file_manager.create_sync_folder(device.normalized_name)
         existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
         
         scanner = USBScanner(device)
@@ -213,8 +268,7 @@ def main(config_path: str = "PhoneSync_config.yaml", max_files_per_sync: int = N
             print("Invalid configuration")
             return 1
         
-        sync_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = setup_logging(config['destination_folder'], sync_timestamp)
+        log_file = setup_logging(config['destination_folder'])
         
         logger.info("=" * 60)
         logger.info("PhoneSync started")
@@ -223,8 +277,11 @@ def main(config_path: str = "PhoneSync_config.yaml", max_files_per_sync: int = N
             logger.info(f"Limiting copy to {max_files_per_sync} files (command-line override)")
         logger.info("=" * 60)
         
-        sync = PhoneSync(config_path, sync_timestamp, max_files_per_sync)
+        sync = PhoneSync(config_path, max_files_per_sync, log_file)
         success = sync.run()
+        
+        # Update log_file reference if it was renamed during run()
+        log_file = sync.log_file if sync.log_file else log_file
         
         logger.info("=" * 60)
         if success:

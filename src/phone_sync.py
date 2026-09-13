@@ -7,10 +7,25 @@ from src.config import load_config, validate_config
 from src.usb_handler import find_connected_device, USBScanner
 from src.file_manager import LocalFileManager
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+
+def setup_logging(log_file: str = "phonesync.log") -> None:
+    """Setup logging to both console and file."""
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(console_handler)
+    
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(log_format))
+    root_logger.addHandler(file_handler)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +50,7 @@ class PhoneSync:
     
     def run(self) -> bool:
         """Execute the sync operation."""
-        logger.info("PhoneSync started")
+        logger.info("PhoneSync sync operation started")
         
         device = find_connected_device()
         if not device:
@@ -62,7 +77,7 @@ class PhoneSync:
         
         self._report_summary()
         
-        logger.info("PhoneSync completed successfully")
+        logger.info("PhoneSync sync operation completed successfully")
         return True
     
     def _process_file(self, file_info: Dict[str, Any], sync_folder: Path, 
@@ -156,11 +171,24 @@ class PhoneSync:
 def main(config_path: str = "PhoneSync_config.yaml") -> int:
     """Main entry point."""
     try:
+        setup_logging("phonesync.log")
+        logger.info("=" * 60)
+        logger.info("PhoneSync started")
+        logger.info("=" * 60)
+        
         sync = PhoneSync(config_path)
         success = sync.run()
+        
+        logger.info("=" * 60)
+        if success:
+            logger.info("PhoneSync completed successfully")
+        else:
+            logger.error("PhoneSync completed with errors")
+        logger.info("=" * 60)
+        
         return 0 if success else 1
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error(f"Fatal error: {e}", exc_info=True)
         return 1
 
 

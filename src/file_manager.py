@@ -16,9 +16,10 @@ class LocalFileManager:
         self.destination_folder = Path(destination_folder)
         self.destination_folder.mkdir(parents=True, exist_ok=True)
     
-    def create_sync_folder(self, phone_name: str) -> Path:
+    def create_sync_folder(self, phone_name: str, timestamp: str = "") -> Path:
         """Create new Sync_<timestamp>_<Phone_Name> folder."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if not timestamp:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         sync_folder_name = f"Sync_{timestamp}_{phone_name}"
         sync_folder = self.destination_folder / sync_folder_name
         sync_folder.mkdir(parents=True, exist_ok=True)

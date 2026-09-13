@@ -8,12 +8,21 @@ from src.usb_handler import find_connected_device, USBScanner
 from src.file_manager import LocalFileManager
 
 
-def setup_logging(log_file: str = "phonesync.log") -> None:
-    """Setup logging to both console and file."""
+def setup_logging(destination_folder: str, sync_timestamp: str) -> Path:
+    """Setup logging to both console and file in destination folder."""
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    
+    dest_path = Path(destination_folder)
+    dest_path.mkdir(parents=True, exist_ok=True)
+    
+    log_file = dest_path / f"Sync_{sync_timestamp}.log"
     
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
+    
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
     
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
@@ -24,6 +33,8 @@ def setup_logging(log_file: str = "phonesync.log") -> None:
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(log_format))
     root_logger.addHandler(file_handler)
+    
+    return log_file
 
 
 logger = logging.getLogger(__name__)
@@ -32,7 +43,7 @@ logger = logging.getLogger(__name__)
 class PhoneSync:
     """Main PhoneSync orchestrator."""
     
-    def __init__(self, config_path: str = "PhoneSync_config.yaml"):
+    def __init__(self, config_path: str = "PhoneSync_config.yaml", sync_timestamp: str = ""):
         self.config = load_config(config_path)
         
         if not validate_config(self.config):
@@ -41,6 +52,7 @@ class PhoneSync:
         self.destination_folder = self.config['destination_folder']
         self.phone_folders = self.config['phone_folders']
         self.excluded_folders = self.config.get('excluded_folders', [])
+        self.sync_timestamp = sync_timestamp
         
         self.file_manager = LocalFileManager(self.destination_folder)
         self.files_copied = 0
@@ -69,7 +81,7 @@ class PhoneSync:
             logger.warning("No files found on phone")
             return True
         
-        sync_folder = self.file_manager.create_sync_folder(device.normalized_name)
+        sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
         existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
         
         for file_info in phone_files:
@@ -171,12 +183,21 @@ class PhoneSync:
 def main(config_path: str = "PhoneSync_config.yaml") -> int:
     """Main entry point."""
     try:
-        setup_logging("phonesync.log")
+        config = load_config(config_path)
+        
+        if not validate_config(config):
+            print("Invalid configuration")
+            return 1
+        
+        sync_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = setup_logging(config['destination_folder'], sync_timestamp)
+        
         logger.info("=" * 60)
         logger.info("PhoneSync started")
+        logger.info(f"Log file: {log_file}")
         logger.info("=" * 60)
         
-        sync = PhoneSync(config_path)
+        sync = PhoneSync(config_path, sync_timestamp)
         success = sync.run()
         
         logger.info("=" * 60)
@@ -184,11 +205,23 @@ def main(config_path: str = "PhoneSync_config.yaml") -> int:
             logger.info("PhoneSync completed successfully")
         else:
             logger.error("PhoneSync completed with errors")
+        logger.info(f"Log file: {log_file}")
         logger.info("=" * 60)
         
+        # Flush and close all handlers
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+            handler.close()
+        logging.shutdown()
+        
+        print(f"\n✓ Log saved to: {log_file}")
         return 0 if success else 1
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+            handler.close()
+        logging.shutdown()
         return 1
 
 

@@ -92,45 +92,101 @@ excluded_folders:
 ```
 
 ### Opis pól
-- **phone_folders**: Lista folderów na telefonie do przeszukiwania (rekursywnie ze wszystkich podfolderów)
+- **phone_folders** (opcjonalny): Lista folderów na telefonie do przeszukiwania (rekursywnie ze wszystkich podfolderów). Jeśli brakuje lub jest pusta - program skanuje cały telefon (/) z wyłączeniem folderów z `excluded_folders`.
 - **destination_folder**: Folder docelowy na laptopie
-- **excluded_folders**: Lista podfolderów do pominięcia (nie będą przeszukiwane ani kopiowane)
+- **excluded_folders** (opcjonalny): Lista podfolderów do pominięcia (nie będą przeszukiwane ani kopiowane)
+- **max_files_per_sync** (opcjonalny): Maksymalna liczba plików **do skopiowania** w jednym uruchomieniu. Jeśli nie ustawiono (null), program skopiuje wszystkie pliki wymagające inkrementalnego kopiowania. **Ważne**: limit dotyczy tylko plików faktycznie skopiowanych (już istniejących lub zmienionych), nie liczby skanowanych plików. Program skanuje wszystkie pliki, aby sprawdzić co się zmieniło, ale kopiuje tylko tych N. Można także przekazać ten parametr przez linię poleceń (ma priorytet nad konfiguracją).
 
 ## Przebieg Działania
-1. Program odczytuje plik konfiguracyjny `PhoneSync_config.yaml`
+1. Program odczytuje plik konfiguracyjny `PhoneSync_config.yaml` (oraz opcjonalnie pobiera `max_files_per_sync` z linii poleceń)
 2. Szuka telefonu podłączonego przez USB
    - Znajduje nazwę telefonu z systemu Android
    - Normalizuje nazwę: zamienia wszystkie znaki nie-litery i nie-cyfry na `_`, usuwa powtarzające się `_`, trimuje `_` z obu końców
    - Przygotowuje znormalizowaną nazwę do użycia w nazwie folderu
 3. Tworzy nowy subfolder `Sync_<timestamp>_<Phone_Name>` w folderze docelowym
-4. Przeszukuje foldery wskazane w konfiguracji **recursively** (ze wszystkich podfolderów)
-5. Dla każdego znalezionego pliku:
+4. **Skanuje foldery na telefonie folder po folderze**:
+   - Jeśli `phone_folders` jest pusta/pominięta → skanuje cały telefon od root (`/`)
+   - Pomija foldery wymienione w `excluded_folders`
+   - **W każdym folderze indywidualnie sortuje pliki po modTime** (od najstarszych do najnowszych)
+5. Dla każdego pliku (w kolejności: folder po folderze, a w ramach folderu od najstarszych):
    - Sprawdza czy plik o identycznej ścieżce i nazwie istnieje w którymkolwiek z istniejących folderów `Sync_*_<Phone_Name>`
    - Jeśli **istnieje**:
      - Porównuje rozmiar i modTime
-     - Jeśli rozmiar i modTime się zgadzają (modTime ±1 sekunda) → pominąć (już skopiowany)
-     - Jeśli rozmiar lub modTime się różnią → wyświetlić WARNING i skopiować do najnowszego `Sync_*_<Phone_Name>`
-   - Jeśli **nie istnieje** w żadnym `Sync_*_<Phone_Name>`:
-     - Odczytuje rozmiar pliku i modTime z telefonu
-     - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>_<Phone_Name>/`)
-     - Po skopiowaniu ustawia modTime na laptopie do wartości odczytanej z telefonu
-     - **Weryfikuje rozmiar i modTime**: porównuje wartości na laptopie z wartościami na telefonie (rozmiar musi się zgadzać dokładnie, modTime ±1 sekunda)
-     - Jeśli weryfikacja się nie powiedzie → program się kończy z błędem: `"BŁĄD: Weryfikacja pliku [path/nazwa] nie powiodła się - rozmiar lub modTime się nie zgadzają"`
-6. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
+     - Jeśli rozmiar i modTime się zgadzają (modTime ±1 sekunda) → **pominąć** (już skopiowany)
+     - Jeśli rozmiar lub modTime się różnią → wyświetlić **WARNING** i **dodać do listy do skopiowania**
+   - Jeśli **nie istnieje** w żadnym `Sync_*_<Phone_Name>` → **dodać do listy do skopiowania**
+6. **Limitowanie i wczesne zatrzymanie skanowania**: 
+   - Jeśli `max_files_per_sync` jest ustawiony (w konfigu lub CLI), program zbiera pliki do skopiowania
+   - Gdy liczba plików do skopiowania osiągnie limit → **Program przerywa skanowanie kolejnych folderów**
+   - Loguje informację ile plików pozostało nieskanowanych (mogą być przetwarzane w następnym uruchomieniu)
+7. Dla każdego pliku z listy do skopiowania:
+   - Odczytuje rozmiar pliku i modTime z telefonu
+   - Kopiuje plik zachowując pełną ścieżkę (tworzy strukturę folderów w najnowszym `Sync_<timestamp>_<Phone_Name>/`)
+   - Po skopiowaniu ustawia modTime na laptopie do wartości odczytanej z telefonu
+   - **Weryfikuje rozmiar i modTime**: porównuje wartości na laptopie z wartościami na telefonie (rozmiar musi się zgadzać dokładnie, modTime ±1 sekunda)
+   - Jeśli weryfikacja się nie powiedzie → program się kończy z błędem: `"BŁĄD: Weryfikacja pliku [path/nazwa] nie powiodła się - rozmiar lub modTime się nie zgadzają"`
+8. Raportuje postęp operacji, wszystkie WARNING'i i ewentualne błędy
+
+## Uruchamianie Programu
+
+### Składnia
+```bash
+python main.py [config_path] [max_files_per_sync]
+```
+
+### Parametry
+- `config_path` (opcjonalny): ścieżka do pliku konfiguracyjnego (domyślnie: `PhoneSync_config.yaml`)
+- `max_files_per_sync` (opcjonalny): limit liczby plików do skopiowania (overriduje wartość z konfigu). **Ważne**: program skanuje foldery sekwencyjnie i przerwie skanowanie gdy osiągnie limit, co oszczędza czas na niepotrzebnym skanowaniu pozostałych folderów.
+
+### Przykłady
+```bash
+# Uruchomienie z konfigu
+python main.py
+
+# Uruchomienie z innym plikiem konfigu
+python main.py config_prod.yaml
+
+# Uruchomienie z limitem 5 plików (overriduje konfigurację)
+python main.py PhoneSync_config.yaml 5
+```
 
 ## Testowanie
 
-### Bezpieczne Testowanie Kopii Inkrementalnych
-- Podczas testowania kopii inkrementalnych należy postępować **ostrożnie** i testować na małych porcjach danych
-- W jednym kroku kopii skopiować **1-2 pliki** i dokładnie sprawdzić:
+### Bezpieczne Testowanie Kopii Inkrementalnych z Prawdziwym Telefonem
+
+**Kluczowy parameter do testowania: `max_files_per_sync` (w konfiguracji lub linii poleceń)**
+
+- **Rekomendowana strategia testowania:**
+  1. Zacząć z bardzo małym limitem przez linię poleceń: `python main.py PhoneSync_config.yaml 3`
+  2. Uruchomić program i potwierdzić że zadziałało - zostały skopiowane dokładnie 3 pliki do skopiowania
+  3. Po każdej iteracji zwiększać limit: `python main.py PhoneSync_config.yaml 5`, potem `10`, itd.
+  4. Dopiero po potwierdzeniu że logika działa - uruchomić bez limitu: `python main.py` (skopiuje wszystkie)
+
+- **Ważne: Program przerywa skanowanie**
+  - Gdy osiągnie limit plików do skopiowania - **program przerwie skanowanie kolejnych folderów**
+  - Loguje ile plików pozostało nieskanowanych (`"Stopped early - X files remaining not scanned"`)
+  - To znacznie oszczędza czas testowania, bo nie skanuje całego telefonu
+  - W następnym uruchomieniu z limitem będzie skanować od nowa i zbierze kolejne pliki
+
+- **Co weryfikować podczas testowania:**
   - Czy pliki zostały skopiowane do prawidłowego folderu `Sync_<timestamp>_<Phone_Name>/`
   - Czy **rozmiar pliku** na laptopie **dokładnie zgadza się** z rozmiarem na telefonie (do bajtu)
   - Czy **modTime (czas modyfikacji)** na laptopie zgadza się z czasem na telefonie (tolerancja ±1 sekunda)
   - Czy struktura folderów jest prawidłowo zachowana
-- Po każdym testowym kroku przygotować nowe testy z plikami, które będą:
-  - Nowe (nie istniały w poprzednich kopiach)
-  - Zmodyfikowane (zmienić plik na telefonie i sprawdzić czy program go ponownie skopiuje)
-  - Takie same jak poprzednio (sprawdzić czy program je prawidłowo ominął)
+  - Czy logika inkrementalna działa - w następnym uruchomieniu już skopiowane pliki są pomijane
+  - Czy pliki które się zmieniły na telefonie są ponownie skopiowane z WARNING'iem
+  - Czy log pokazuje że program wczesnie przerwał skanowanie (jeśli było co skanować dalej)
+
+- **Scenariusze testowe**:
+  1. **Pierwsze uruchomienie z limitem**: Skopiować 3-5 plików, sprawdzić czy się prawidłowo skopiowały
+  2. **Drugie uruchomienie z tym samym limitem**: Sprawdzić że poprzednie pliki są pomijane ("already synced"), skopiować następne 3-5. Log powinien pokazać że skanowanie zostało przerwane.
+  3. **Zmiana pliku na telefonie**: Zmienić jeden z już skopiowanych plików, uruchomić program - powinien pokazać WARNING i skopiować zmieniony plik
+  4. **Pełne kopiowanie**: Po potwierdzeniu logiki - uruchomić bez limitu
+
+### Strategia Testowania Bez Limitu
+- Dopiero po potwierdzeniu prawidłowego działania na małych liczbach plików
+- Można przystąpić do pełnego kopiowania całej zawartości telefonu
+- Zarejestrować czas działania dla potrzeb optymalizacji jeśli zajdzie potrzeba
 
 ## Uwagi Dodatkowe
 

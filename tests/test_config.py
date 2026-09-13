@@ -24,11 +24,11 @@ class TestConfigValidation(unittest.TestCase):
         self.assertTrue(validate_config(config))
     
     def test_validate_config_missing_phone_folders(self):
-        """Test validation fails when phone_folders is missing."""
+        """Test validation passes when phone_folders is missing (it's optional)."""
         config = {
             'destination_folder': '/tmp/sync'
         }
-        self.assertFalse(validate_config(config))
+        self.assertTrue(validate_config(config))
     
     def test_validate_config_missing_destination_folder(self):
         """Test validation fails when destination_folder is missing."""

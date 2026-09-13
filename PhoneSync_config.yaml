@@ -5,3 +5,8 @@ destination_folder: "c:\\Users\\Wojtek\\PhoneSync"
 
 excluded_folders:
   - .thumbnails
+
+# Optional: Limit the number of files to sync per run (for safe testing with real phone)
+# Oldest files are processed first when limit is set
+# Comment out or set to null for unlimited sync
+# max_files_per_sync: 5

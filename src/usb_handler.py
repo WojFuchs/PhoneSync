@@ -37,13 +37,19 @@ class USBScanner:
     def find_all_files(self, folder_paths: List[str], excluded_folders: List[str]) -> List[Dict[str, Any]]:
         """
         Find all files recursively in given folders on phone.
-        Returns list of dicts with file metadata: {path, name, size, modtime}.
+        If folder_paths is empty, scans entire phone ("/").
+        Files are sorted within each folder by modtime (oldest first).
+        Returns list of dicts with file metadata: {path, name, size, modtime, folder}.
         """
         all_files = []
         
-        for folder in folder_paths:
+        folders_to_scan = folder_paths if folder_paths else ["/"]
+        
+        for folder in folders_to_scan:
             files = self._scan_folder_recursive(folder, excluded_folders)
-            all_files.extend(files)
+            # Sort files within folder by modtime (oldest first)
+            files_sorted = sorted(files, key=lambda x: x.get('modtime', 0))
+            all_files.extend(files_sorted)
         
         logger.info(f"Found {len(all_files)} files on phone")
         return all_files

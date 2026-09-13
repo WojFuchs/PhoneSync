@@ -43,15 +43,20 @@ logger = logging.getLogger(__name__)
 class PhoneSync:
     """Main PhoneSync orchestrator."""
     
-    def __init__(self, config_path: str = "PhoneSync_config.yaml", sync_timestamp: str = ""):
+    def __init__(self, config_path: str = "PhoneSync_config.yaml", sync_timestamp: str = "", 
+                 max_files_per_sync_param: int = None):
         self.config = load_config(config_path)
         
         if not validate_config(self.config):
             raise ValueError("Invalid configuration")
         
         self.destination_folder = self.config['destination_folder']
-        self.phone_folders = self.config['phone_folders']
+        self.phone_folders = self.config.get('phone_folders', [])
         self.excluded_folders = self.config.get('excluded_folders', [])
+        
+        # Command-line parameter takes precedence over config
+        self.max_files_per_sync = max_files_per_sync_param if max_files_per_sync_param is not None else self.config.get('max_files_per_sync')
+        
         self.sync_timestamp = sync_timestamp
         
         self.file_manager = LocalFileManager(self.destination_folder)
@@ -72,29 +77,48 @@ class PhoneSync:
         
         logger.info(f"Found phone: {device.device_name} (normalized: {device.normalized_name})")
         
+        sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
+        existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
+        
         scanner = USBScanner(device)
         
+        # Scan folders - files already sorted by folder and by modtime within each folder
         phone_files = scanner.find_all_files(self.phone_folders, self.excluded_folders)
-        logger.info(f"Found {len(phone_files)} files to process")
+        logger.info(f"Found {len(phone_files)} files to scan")
         
         if not phone_files:
             logger.warning("No files found on phone")
             return True
         
-        sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
-        existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
+        # Process files and collect those that need copying
+        # Stop processing when reaching copy limit to avoid unnecessary scanning
+        files_to_copy = []
+        files_scanned = 0
         
         for file_info in phone_files:
-            self._process_file(file_info, sync_folder, existing_folders, device)
+            files_scanned += 1
+            
+            if self._should_copy_file(file_info, existing_folders):
+                files_to_copy.append(file_info)
+                
+                # Check if we reached the limit of files to copy
+                if self.max_files_per_sync is not None and len(files_to_copy) >= self.max_files_per_sync:
+                    logger.info(f"Reached copy limit: {self.max_files_per_sync} files to copy (scanned {files_scanned} files)")
+                    if files_scanned < len(phone_files):
+                        logger.info(f"Stopped early - {len(phone_files) - files_scanned} files remaining not scanned")
+                    break
+        
+        # Now actually copy the files
+        for file_info in files_to_copy:
+            self._copy_file(file_info, sync_folder, device)
         
         self._report_summary()
         
         logger.info("PhoneSync sync operation completed successfully")
         return True
     
-    def _process_file(self, file_info: Dict[str, Any], sync_folder: Path, 
-                     existing_folders: List[Path], device) -> None:
-        """Process single file: check if already synced, copy if needed."""
+    def _should_copy_file(self, file_info: Dict[str, Any], existing_folders: List[Path]) -> bool:
+        """Check if file should be copied (doesn't exist or changed)."""
         file_path = file_info['path']
         file_size = file_info['size']
         file_relative_path = file_path.lstrip('/')
@@ -106,14 +130,20 @@ class PhoneSync:
                                                    file_info.get('modtime', 0)):
                 logger.debug(f"File already synced (unchanged): {file_relative_path}")
                 self.files_skipped += 1
-                return
+                return False
             else:
                 logger.warning(f"File changed on phone: {file_relative_path}")
                 self.files_changed.append(file_relative_path)
+                return True
         
+        return True
+    
+    def _copy_file(self, file_info: Dict[str, Any], sync_folder: Path, device) -> None:
+        """Copy single file and verify it."""
         if self._copy_and_verify_file(file_info, sync_folder, device):
             self.files_copied += 1
         else:
+            file_relative_path = file_info['path'].lstrip('/')
             self.errors.append(f"Failed to copy: {file_relative_path}")
     
     def _copy_and_verify_file(self, file_info: Dict[str, Any], sync_folder: Path, device) -> bool:
@@ -180,8 +210,13 @@ class PhoneSync:
         logger.info("=" * 60)
 
 
-def main(config_path: str = "PhoneSync_config.yaml") -> int:
-    """Main entry point."""
+def main(config_path: str = "PhoneSync_config.yaml", max_files_per_sync: int = None) -> int:
+    """Main entry point.
+    
+    Args:
+        config_path: Path to PhoneSync_config.yaml
+        max_files_per_sync: Optional limit on number of files to copy (overrides config)
+    """
     try:
         config = load_config(config_path)
         
@@ -195,9 +230,11 @@ def main(config_path: str = "PhoneSync_config.yaml") -> int:
         logger.info("=" * 60)
         logger.info("PhoneSync started")
         logger.info(f"Log file: {log_file}")
+        if max_files_per_sync is not None:
+            logger.info(f"Limiting copy to {max_files_per_sync} files (command-line override)")
         logger.info("=" * 60)
         
-        sync = PhoneSync(config_path, sync_timestamp)
+        sync = PhoneSync(config_path, sync_timestamp, max_files_per_sync)
         success = sync.run()
         
         logger.info("=" * 60)

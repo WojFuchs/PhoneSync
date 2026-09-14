@@ -10,7 +10,7 @@ import logging
 import time
 from datetime import datetime
 
-from src.phone_sync import PhoneSync, setup_logging
+from src.phone_sync import PhoneSync
 from src.usb_handler import AndroidDevice
 
 
@@ -106,19 +106,16 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - returns log_file only (timestamp is in the filename)
-        log_file = setup_logging(str(self.real_dest_folder))
+        # Create PhoneSync - logging is setup automatically in __init__
+        sync = PhoneSync(
+            config_path=str(self.config_path),
+            max_files_per_sync_param=3
+        )
+        log_file = sync.log_file
         
         # Verify initial log file exists without phone name
         initial_log = log_file
         self.assertTrue(initial_log.exists(), f"Initial log file should exist at {initial_log}")
-        
-        # Run PhoneSync with max_files_per_sync=3
-        sync = PhoneSync(
-            config_path=str(self.config_path),
-            max_files_per_sync_param=3,
-            log_file=log_file
-        )
         
         # Extract timestamp from log_file name for sync folder path
         parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
@@ -182,14 +179,12 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - returns log_file only (timestamp is in the filename)
-        log_file = setup_logging(str(self.real_dest_folder))
-        
+        # Create PhoneSync - logging is setup automatically in __init__
         sync = PhoneSync(
             config_path=str(self.config_path),
-            max_files_per_sync_param=5,
-            log_file=log_file
+            max_files_per_sync_param=5
         )
+        log_file = sync.log_file
         
         # Extract timestamp from log_file name for sync folder path
         parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
@@ -254,15 +249,12 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - returns log_file only (timestamp is in the filename)
-        log_file = setup_logging(str(self.real_dest_folder))
-        
-        # No max_files_per_sync limit
+        # Create PhoneSync - logging is setup automatically in __init__
         sync = PhoneSync(
             config_path=str(self.config_path),
-            max_files_per_sync_param=None,
-            log_file=log_file
+            max_files_per_sync_param=None
         )
+        log_file = sync.log_file
         
         # Extract timestamp from log_file name for sync folder path
         parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
@@ -323,14 +315,12 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - returns log_file only (timestamp is in the filename)
-        log_file = setup_logging(str(self.real_dest_folder))
-        
+        # Create PhoneSync - logging is setup automatically in __init__
         sync = PhoneSync(
             config_path=str(self.config_path),
-            max_files_per_sync_param=None,
-            log_file=log_file
+            max_files_per_sync_param=None
         )
+        log_file = sync.log_file
         
         # Extract timestamp from log_file name for sync folder path
         parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
@@ -391,8 +381,12 @@ excluded_folders:
         
         mock_scanner.find_files_for_copying = mock_find_files_for_copying
         
-        # Setup real logging - returns log_file only (timestamp is in the filename)
-        log_file = setup_logging(str(self.real_dest_folder))
+        # Create PhoneSync - logging is setup automatically in __init__
+        sync = PhoneSync(
+            config_path=str(self.config_path),
+            max_files_per_sync_param=None
+        )
+        log_file = sync.log_file
         
         # Verify initial log file exists without phone name
         initial_log = log_file
@@ -402,12 +396,6 @@ excluded_folders:
         initial_log_name = initial_log.name
         self.assertNotIn("Test_Phone_77", initial_log_name, 
                         f"Initial log file should NOT have phone name, got: {initial_log_name}")
-        
-        sync = PhoneSync(
-            config_path=str(self.config_path),
-            max_files_per_sync_param=None,
-            log_file=log_file
-        )
         
         # Extract timestamp from log_file name for sync folder path
         parts = log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]

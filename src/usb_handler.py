@@ -9,12 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class AndroidDevice:
-    """Represents an Android device connected via USB MTP."""
+    """Represents an Android device connected via USB (ADB or MTP)."""
     
     def __init__(self, device_path: str, device_name: str):
-        self.device_path = device_path
+        self.device_path = device_path  # Device serial number for ADB or MTP path
         self.device_name = device_name
         self.normalized_name = self._normalize_phone_name(device_name)
+        self.connection_type = "unknown"  # adb, mtp, or unknown
     
     def _normalize_phone_name(self, name: str) -> str:
         """Normalize phone name: replace non-alphanumeric with underscore."""
@@ -29,7 +30,7 @@ class AndroidDevice:
 
 
 class USBScanner:
-    """Scan and find files on connected Android device via MTP."""
+    """Scan and find files on connected Android device via ADB or MTP."""
     
     def __init__(self, device: AndroidDevice):
         self.device = device
@@ -72,7 +73,83 @@ class USBScanner:
         return files_to_copy
     
     def _scan_folder_recursive(self, folder: str, excluded_folders: List[str]) -> List[Dict[str, Any]]:
-        """Recursively scan folder on phone for files."""
+        """Recursively scan folder on phone for files via ADB."""
+        files = []
+        
+        try:
+            if self.device.connection_type == "adb":
+                files = self._scan_folder_adb(folder, excluded_folders)
+            else:
+                # Fall back to mtp-ls
+                files = self._scan_folder_mtp(folder, excluded_folders)
+            
+            return files
+        
+        except Exception as e:
+            logger.error(f"ERROR: Error scanning folder {folder}: {e}")
+            return []
+    
+    def _scan_folder_adb(self, folder: str, excluded_folders: List[str]) -> List[Dict[str, Any]]:
+        """Scan folder using ADB shell."""
+        files = []
+        
+        try:
+            # Use adb shell ls to list files
+            # Format: ls -la /path
+            cmd = ['adb', '-s', self.device.device_path, 'shell', 'ls', '-la', folder]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                logger.warning(f"WARNING: Could not scan folder {folder} via ADB: {result.stderr}")
+                return files
+            
+            for line in result.stdout.split('\n'):
+                if not line.strip():
+                    continue
+                
+                # Parse ls -la output
+                # Format: drwxrwx--- 2 root sdcard_r 4096 2023-01-01 12:00 foldername
+                # or:     -rw-rw---- 1 root sdcard_r 12345 2023-01-01 12:00 filename
+                parts = line.split()
+                if len(parts) < 9:
+                    continue
+                
+                mode = parts[0]
+                name = ' '.join(parts[8:])  # Handle names with spaces
+                
+                # Check if it's excluded
+                if name in excluded_folders:
+                    logger.debug(f"Skipping excluded folder: {name}")
+                    continue
+                
+                if mode.startswith('d'):
+                    # It's a directory - recurse
+                    subfolder = f"{folder}/{name}"
+                    sub_files = self._scan_folder_adb(subfolder, excluded_folders)
+                    files.extend(sub_files)
+                else:
+                    # It's a file
+                    try:
+                        size = int(parts[4])
+                        file_path = f"{folder}/{name}"
+                        files.append({
+                            'path': file_path,
+                            'name': name,
+                            'size': size,
+                            'folder': folder,
+                            'modtime': 0  # ADB ls doesn't easily give us modtime, would need stat
+                        })
+                    except (ValueError, IndexError):
+                        logger.debug(f"Could not parse file info: {line}")
+            
+            return files
+        
+        except Exception as e:
+            logger.error(f"ERROR: ADB scan error for {folder}: {e}")
+            return []
+    
+    def _scan_folder_mtp(self, folder: str, excluded_folders: List[str]) -> List[Dict[str, Any]]:
+        """Scan folder using mtp-ls (fallback)."""
         files = []
         
         try:
@@ -101,17 +178,18 @@ class USBScanner:
                 
                 if is_dir:
                     subfolder = f"{folder}/{name}"
-                    sub_files = self._scan_folder_recursive(subfolder, excluded_folders)
+                    sub_files = self._scan_folder_mtp(subfolder, excluded_folders)
                     files.extend(sub_files)
                 else:
                     file_info = self._extract_file_info(line, folder, name)
                     if file_info:
                         files.append(file_info)
+            
+            return files
         
         except Exception as e:
-            logger.error(f"ERROR: Error scanning folder {folder}: {e}")
-        
-        return files
+            logger.error(f"ERROR: MTP scan error for {folder}: {e}")
+            return []
     
     def _extract_file_info(self, line: str, folder: str, name: str) -> Optional[Dict[str, Any]]:
         """Extract file metadata from mtp-ls output line."""
@@ -136,12 +214,91 @@ class USBScanner:
 
 
 def find_connected_device() -> Optional[AndroidDevice]:
-    """Find first Android device connected via USB MTP."""
+    """Find first Android device connected via USB (ADB, MTP, or other)."""
+    
+    # Method 1: Try ADB first (most reliable for programmatic access)
+    device = _find_device_via_adb()
+    if device:
+        logger.info("Found device via ADB")
+        return device
+    
+    # Method 2: Try mtp-detect (libmtp-tools)
+    device = _find_device_via_mtp_detect()
+    if device:
+        logger.info("Found device via MTP detection")
+        return device
+    
+    # No device found
+    logger.error("ERROR: No Android device found. Please ensure:")
+    logger.error("  - Device is connected via USB in MTP/File Transfer mode")
+    logger.error("  - ADB is installed: https://developer.android.com/tools/releases/platform-tools")
+    logger.error("  - OR libmtp-tools is installed (via MSYS2: pacman -S libmtp)")
+    return None
+
+
+def _find_device_via_adb() -> Optional[AndroidDevice]:
+    """Try to find Android device via ADB (Android Debug Bridge)."""
+    try:
+        # Check if adb is available
+        result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=5)
+        
+        if result.returncode != 0:
+            logger.debug("ADB not available or returned error")
+            return None
+        
+        # Parse adb devices output
+        # Format:
+        # List of attached devices
+        # device_id device
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line or 'attached' in line.lower() or 'device' in line.lower():
+                continue
+            
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == 'device':
+                device_id = parts[0]
+                # Get device name/model via adb shell
+                device_name = _get_adb_device_name(device_id)
+                if device_name:
+                    device = AndroidDevice(device_id, device_name)
+                    device.connection_type = "adb"
+                    return device
+        
+        return None
+    
+    except FileNotFoundError:
+        logger.debug("ADB command not found in PATH")
+        return None
+    except Exception as e:
+        logger.debug(f"ADB detection failed: {e}")
+        return None
+
+
+def _get_adb_device_name(device_id: str) -> str:
+    """Get device name from ADB device properties."""
+    try:
+        result = subprocess.run(
+            ['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.model'],
+            capture_output=True, text=True, timeout=5
+        )
+        model = result.stdout.strip()
+        if model:
+            return model
+    except Exception as e:
+        logger.debug(f"Could not get device model: {e}")
+    
+    return f"Android_{device_id[:8]}"
+
+
+def _find_device_via_mtp_detect() -> Optional[AndroidDevice]:
+    """Try to find Android device via mtp-detect (libmtp-tools)."""
     try:
         result = subprocess.run(['mtp-detect'], capture_output=True, text=True, timeout=5)
         
         if result.returncode != 0:
-            logger.warning("WARNING: No MTP device detected")
+            logger.debug("mtp-detect returned error")
             return None
         
         for line in result.stdout.split('\n'):
@@ -149,12 +306,15 @@ def find_connected_device() -> Optional[AndroidDevice]:
                 device_path = '/mtp'
                 device_name = 'AndroidPhone'
                 
-                logger.info(f"Found Android device: {device_name}")
-                return AndroidDevice(device_path, device_name)
+                device = AndroidDevice(device_path, device_name)
+                device.connection_type = "mtp"
+                return device
         
-        logger.warning("WARNING: No Android device found in MTP detection")
         return None
     
+    except FileNotFoundError:
+        logger.debug("mtp-detect command not found in PATH")
+        return None
     except Exception as e:
-        logger.error(f"ERROR: Error detecting MTP device: {e}")
+        logger.debug(f"MTP detection failed: {e}")
         return None

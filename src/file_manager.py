@@ -32,12 +32,7 @@ class LocalFileManager:
         pattern = f"Sync_*_{phone_name}"
         folders = sorted(self.destination_folder.glob(pattern))
         
-        if folders:
-            first_folder = folders[0].name
-            last_folder = folders[-1].name
-            logger.info(f"Found {len(folders)} existing sync folder(s) for '{phone_name}' - oldest: {first_folder}, newest: {last_folder}")
-        else:
-            logger.info(f"No existing sync folders found for '{phone_name}'")
+        logger.info(f"Found {len(folders)} existing sync folder(s) for {phone_name}")
         
         return folders
     
@@ -131,3 +126,25 @@ class LocalFileManager:
         if not sync_folders:
             return None
         return sync_folders[-1]
+    
+    def build_existing_files_index(self, sync_folders: List[Path]) -> Tuple[Dict[str, Path], int]:
+        """Build index of files from existing sync folders, keeping only newest version per path.
+        
+        Returns (files_index, total_versions) where:
+        - files_index: Dict[relative_path] -> Path of newest version
+        - total_versions: Total count of all file versions found
+        """
+        files_by_path = {}
+        total_versions = 0
+        
+        # Iterate folders in reverse (newest first) so oldest versions are kept in dict if not overwritten
+        for folder in reversed(sync_folders):
+            for file_path in folder.rglob('*'):
+                if file_path.is_file():
+                    total_versions += 1
+                    relative_path = str(file_path.relative_to(folder)).replace('\\', '/')
+                    # Only keep the first occurrence (newest) for each path
+                    if relative_path not in files_by_path:
+                        files_by_path[relative_path] = file_path
+        
+        return files_by_path, total_versions

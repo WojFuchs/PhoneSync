@@ -38,6 +38,7 @@ class PhoneSync:
         self.files_skipped = 0
         self.files_changed = []
         self.errors = []
+        self.file_changes_info = {}  # Track which files changed to log in copy step
         
         # Log startup info
         self.logger.info("=" * 60)
@@ -48,7 +49,14 @@ class PhoneSync:
         self.logger.info("=" * 60)
         
         # Execute sync operation
-        self.run()
+        try:
+            self.run()
+        except ValueError as e:
+            self.logger.error(f"Configuration error: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Fatal error: {e}")
+            raise
     
     def _setup_logging(self) -> Path:
         """Setup logging to both console and file. Returns log file path."""
@@ -145,7 +153,11 @@ class PhoneSync:
             
             sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
             existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
-            self.logger.info(f"Found {len(existing_folders)} existing sync folder(s) for {device.normalized_name}")
+            
+            # Build index of files from existing folders, keeping only newest version per path
+            existing_files_index, total_versions = self.file_manager.build_existing_files_index(existing_folders)
+            unique_file_count = len(existing_files_index)
+            self.logger.info(f"Loaded {total_versions} file versions, {unique_file_count} unique files from existing {len(existing_folders)} sync folders")
             
             scanner = USBScanner(device)
             
@@ -154,7 +166,7 @@ class PhoneSync:
             files_to_copy = scanner.find_files_for_copying(
                 self.phone_folders, 
                 self.excluded_folders,
-                lambda file_info: self._should_copy_file(file_info, existing_folders),
+                lambda file_info: self._should_copy_file(file_info, existing_files_index),
                 self.max_files_per_sync
             )
             
@@ -191,23 +203,31 @@ class PhoneSync:
         print(f"\n✓ Log saved to: {self.log_file}")
         return success
     
-    def _should_copy_file(self, file_info: Dict[str, Any], existing_folders: List[Path]) -> bool:
+    def _should_copy_file(self, file_info: Dict[str, Any], existing_files_index: Dict[str, Path]) -> bool:
         """Check if file should be copied (doesn't exist or changed)."""
         file_path = file_info['path']
         file_size = file_info['size']
         file_relative_path = file_path.lstrip('/')
         
-        existing_file = self.file_manager.find_file_in_sync_folders(file_relative_path, existing_folders)
+        existing_file = existing_files_index.get(file_relative_path)
         
         if existing_file:
             if self.file_manager.is_file_unchanged(existing_file, file_size, 
                                                    file_info.get('modtime', 0)):
-                self.logger.debug(f"File already synced (unchanged): {file_relative_path}")
+                self.logger.info(f"File already synced (unchanged): {file_relative_path}")
                 self.files_skipped += 1
                 return False
             else:
-                self.logger.warning(f"WARNING: File changed on phone: {file_relative_path}")
-                self.logger.debug(f"  existing: size={existing_file.stat().st_size} mtime={int(existing_file.stat().st_mtime)} | phone: size={file_size} mtime={file_info.get('modtime', 0)}")
+                existing_size = existing_file.stat().st_size
+                existing_modtime = int(existing_file.stat().st_mtime)
+                self.logger.debug(f"File changed on phone: {file_relative_path} | existing: size={existing_size} mtime={existing_modtime} | phone: size={file_size} mtime={file_info.get('modtime', 0)}")
+                
+                # Store change info for logging during copy
+                self.file_changes_info[file_relative_path] = {
+                    'prev_size': existing_size,
+                    'prev_modtime': existing_modtime
+                }
+                
                 self.files_changed.append(file_relative_path)
                 return True
         
@@ -258,7 +278,26 @@ class PhoneSync:
             
             # Log file copy with formatted modtime
             modtime_str = datetime.fromtimestamp(expected_modtime).strftime("%Y-%m-%d %H:%M:%S") if expected_modtime > 0 else "unknown"
-            self.logger.info(f"File Copied: modtime: {modtime_str} / path: {file_relative_path} / size: {file_size} bytes")
+            log_msg = f"File Copied: modtime: {modtime_str} / path: {file_relative_path} / size: {file_size} bytes"
+            
+            # Add warning about previous version if file was changed
+            if file_relative_path in self.file_changes_info:
+                prev_info = self.file_changes_info[file_relative_path]
+                prev_modtime = prev_info['prev_modtime']
+                prev_size = prev_info['prev_size']
+                
+                # Build list of changed attributes
+                changed_attrs = []
+                if prev_modtime != expected_modtime:
+                    prev_modtime_str = datetime.fromtimestamp(prev_modtime).strftime("%Y-%m-%d %H:%M:%S")
+                    changed_attrs.append(f"modtime: {prev_modtime_str}")
+                if prev_size != file_size:
+                    changed_attrs.append(f"size: {prev_size} bytes")
+                
+                if changed_attrs:
+                    log_msg += f" -> WARNING: Previously copied with {' / '.join(changed_attrs)}"
+            
+            self.logger.info(log_msg)
             return True
         
         except Exception as e:
@@ -274,9 +313,9 @@ class PhoneSync:
         self.logger.info(f"Files skipped (unchanged): {self.files_skipped}")
         
         if self.files_changed:
-            self.logger.warning(f"WARNING: Files changed on phone ({len(self.files_changed)}):")
+            self.logger.info(f"Files changed on phone ({len(self.files_changed)}):")
             for f in self.files_changed:
-                self.logger.warning(f"  - {f}")
+                self.logger.info(f"  - {f}")
         
         if self.errors:
             self.logger.error(f"ERROR: Errors ({len(self.errors)}):")

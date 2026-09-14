@@ -9,58 +9,15 @@ from src.usb_handler import find_connected_device, USBScanner
 from src.file_manager import LocalFileManager
 
 
-def rename_log_file(log_file: Path, phone_normalized_name: str) -> Path:
-    """Rename log file to include phone name once it's known.
-    
-    Extracts timestamp from the log filename and uses it in the new name.
-    
-    Renames from: Sync_<timestamp>.log
-    To: Sync_<timestamp>_<phone_name>.log
-    """
-    if not log_file.exists():
-        return log_file
-    
-    # Extract timestamp from filename: "Sync_20260913_183425.log" -> "20260913_183425"
-    parts = log_file.stem.split('_')  # ["Sync", "20260913", "183425"]
-    if len(parts) < 3:
-        return log_file
-    
-    timestamp = f"{parts[1]}_{parts[2]}"
-    new_log_file = log_file.parent / f"Sync_{timestamp}_{phone_normalized_name}.log"
-    
-    # Close all file handlers before renaming
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        if isinstance(handler, logging.FileHandler):
-            handler.close()
-            root_logger.removeHandler(handler)
-    
-    # Rename the file - remove destination if it exists (Windows compatibility)
-    try:
-        if new_log_file.exists():
-            new_log_file.unlink()
-        os.rename(log_file, new_log_file)
-        
-        # Re-add file handler with new path
-        log_format = '%(asctime)s - %(message)s'
-        file_handler = logging.FileHandler(new_log_file, encoding='utf-8')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter(log_format))
-        root_logger.addHandler(file_handler)
-        
-        return new_log_file
-    except Exception as e:
-        logger.warning(f"Could not rename log file: {e}")
-        return log_file
-
-
-logger = logging.getLogger(__name__)
-
-
 class PhoneSync:
     """Main PhoneSync orchestrator."""
     
     def __init__(self, config_path: str = "PhoneSync_config.yaml", max_files_per_sync_param: int = None):
+        self.logger = logging.getLogger(__name__)
+        
+        self.sync_prefix = "Sync"
+        self.sync_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         self.config = load_config(config_path)
         
         if not validate_config(self.config):
@@ -75,9 +32,6 @@ class PhoneSync:
         
         # Setup logging
         self.log_file = self._setup_logging()
-        self.sync_timestamp = self._extract_sync_timestamp()
-        
-        self.sync_prefix = "Sync"
         
         self.file_manager = LocalFileManager(self.destination_folder)
         self.files_copied = 0
@@ -86,12 +40,12 @@ class PhoneSync:
         self.errors = []
         
         # Log startup info
-        logger.info("=" * 60)
-        logger.info("PhoneSync started")
-        logger.info(f"Log file: {self.log_file}")
+        self.logger.info("=" * 60)
+        self.logger.info("PhoneSync started")
+        self.logger.info(f"Log file: {self.log_file}")
         if max_files_per_sync_param is not None:
-            logger.info(f"Limiting copy to {max_files_per_sync_param} files (command-line override)")
-        logger.info("=" * 60)
+            self.logger.info(f"Limiting copy to {max_files_per_sync_param} files (command-line override)")
+        self.logger.info("=" * 60)
     
     def _setup_logging(self) -> Path:
         """Setup logging to both console and file. Returns log file path."""
@@ -100,8 +54,7 @@ class PhoneSync:
         dest_path = Path(self.destination_folder)
         dest_path.mkdir(parents=True, exist_ok=True)
         
-        sync_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = dest_path / f"Sync_{sync_timestamp}.log"
+        log_file = dest_path / f"Sync_{self.sync_timestamp}.log"
         
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.DEBUG)
@@ -122,6 +75,50 @@ class PhoneSync:
         
         return log_file
     
+    def _rename_log_file(self, log_file: Path, phone_normalized_name: str) -> Path:
+        """Rename log file to include phone name once it's known.
+        
+        Extracts timestamp from the log filename and uses it in the new name.
+        
+        Renames from: Sync_<timestamp>.log
+        To: Sync_<timestamp>_<phone_name>.log
+        """
+        if not log_file.exists():
+            return log_file
+        
+        # Extract timestamp from filename: "Sync_20260913_183425.log" -> "20260913_183425"
+        parts = log_file.stem.split('_')  # ["Sync", "20260913", "183425"]
+        if len(parts) < 3:
+            return log_file
+        
+        timestamp = f"{parts[1]}_{parts[2]}"
+        new_log_file = log_file.parent / f"Sync_{timestamp}_{phone_normalized_name}.log"
+        
+        # Close all file handlers before renaming
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            if isinstance(handler, logging.FileHandler):
+                handler.close()
+                root_logger.removeHandler(handler)
+        
+        # Rename the file - remove destination if it exists (Windows compatibility)
+        try:
+            if new_log_file.exists():
+                new_log_file.unlink()
+            os.rename(log_file, new_log_file)
+            
+            # Re-add file handler with new path
+            log_format = '%(asctime)s - %(message)s'
+            file_handler = logging.FileHandler(new_log_file, encoding='utf-8')
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(logging.Formatter(log_format))
+            root_logger.addHandler(file_handler)
+            
+            return new_log_file
+        except Exception as e:
+            self.logger.warning(f"Could not rename log file: {e}")
+            return log_file
+    
     def _extract_sync_timestamp(self) -> str:
         """Extract timestamp from log file name."""
         parts = self.log_file.stem.split('_')  # "Sync_20260913_183425" -> ["Sync", "20260913", "183425"]
@@ -129,48 +126,66 @@ class PhoneSync:
     
     def run(self) -> bool:
         """Execute the sync operation."""
-        logger.info("PhoneSync sync operation started")
+        self.logger.info("PhoneSync sync operation started")
         
         device = find_connected_device()
         if not device:
-            logger.error("ERROR: No Android device found")
+            self.logger.error("ERROR: No Android device found")
             self.errors.append("No Android device found")
-            return False
+            success = False
+        else:
+            self.logger.info(f"Found phone: {device.device_name} (normalized: {device.normalized_name})")
+            
+            # Rename log file to include phone name now that we know it
+            if self.log_file:
+                self.log_file = self._rename_log_file(self.log_file, device.normalized_name)
+            
+            sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
+            existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
+            
+            scanner = USBScanner(device)
+            
+            # Scan folders for files to copy - scanning stops when limit is reached
+            # Pass callback to validate each file during scanning (checks incremental state)
+            files_to_copy = scanner.find_files_for_copying(
+                self.phone_folders, 
+                self.excluded_folders,
+                lambda file_info: self._should_copy_file(file_info, existing_folders),
+                self.max_files_per_sync
+            )
+            
+            self.logger.info(f"Ready to copy {len(files_to_copy)} files from phone")
+            
+            if not files_to_copy:
+                self.logger.warning("No new files to copy")
+                success = True
+            else:
+                # Now actually copy the files
+                for file_info in files_to_copy:
+                    self._copy_file(file_info, sync_folder, device)
+                
+                self._report_summary()
+                
+                self.logger.info("PhoneSync sync operation completed successfully")
+                success = True
         
-        logger.info(f"Found phone: {device.device_name} (normalized: {device.normalized_name})")
+        # Log completion and shutdown
+        self.logger.info("=" * 60)
+        if success:
+            self.logger.info("PhoneSync completed successfully")
+        else:
+            self.logger.error("ERROR: PhoneSync completed with errors")
+        self.logger.info(f"Log file: {self.log_file}")
+        self.logger.info("=" * 60)
         
-        # Rename log file to include phone name now that we know it
-        if self.log_file:
-            self.log_file = rename_log_file(self.log_file, device.normalized_name)
+        # Flush and close all handlers
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+            handler.close()
+        logging.shutdown()
         
-        sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
-        existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
-        
-        scanner = USBScanner(device)
-        
-        # Scan folders for files to copy - scanning stops when limit is reached
-        # Pass callback to validate each file during scanning (checks incremental state)
-        files_to_copy = scanner.find_files_for_copying(
-            self.phone_folders, 
-            self.excluded_folders,
-            lambda file_info: self._should_copy_file(file_info, existing_folders),
-            self.max_files_per_sync
-        )
-        
-        logger.info(f"Ready to copy {len(files_to_copy)} files from phone")
-        
-        if not files_to_copy:
-            logger.warning("No new files to copy")
-            return True
-        
-        # Now actually copy the files
-        for file_info in files_to_copy:
-            self._copy_file(file_info, sync_folder, device)
-        
-        self._report_summary()
-        
-        logger.info("PhoneSync sync operation completed successfully")
-        return True
+        print(f"\n✓ Log saved to: {self.log_file}")
+        return success
     
     def _should_copy_file(self, file_info: Dict[str, Any], existing_folders: List[Path]) -> bool:
         """Check if file should be copied (doesn't exist or changed)."""
@@ -183,11 +198,11 @@ class PhoneSync:
         if existing_file:
             if self.file_manager.is_file_unchanged(existing_file, file_size, 
                                                    file_info.get('modtime', 0)):
-                logger.debug(f"File already synced (unchanged): {file_relative_path}")
+                self.logger.debug(f"File already synced (unchanged): {file_relative_path}")
                 self.files_skipped += 1
                 return False
             else:
-                logger.warning(f"WARNING: File changed on phone: {file_relative_path}")
+                self.logger.warning(f"WARNING: File changed on phone: {file_relative_path}")
                 self.files_changed.append(file_relative_path)
                 return True
         
@@ -232,78 +247,61 @@ class PhoneSync:
             )
             
             if not verified:
-                logger.error(f"ERROR: Verification failed for {file_relative_path}: {message}")
+                self.logger.error(f"ERROR: Verification failed for {file_relative_path}: {message}")
                 self.errors.append(f"Verification failed: {file_relative_path} - {message}")
                 return False
             
             # Log file copy with formatted modtime
             modtime_str = datetime.fromtimestamp(expected_modtime).strftime("%Y-%m-%d %H:%M:%S") if expected_modtime > 0 else "unknown"
-            logger.info(f"File Copied: modtime: {modtime_str} / path: {file_relative_path} / size: {file_size} bytes")
+            self.logger.info(f"File Copied: modtime: {modtime_str} / path: {file_relative_path} / size: {file_size} bytes")
             return True
         
         except Exception as e:
-            logger.error(f"ERROR: Error processing file {file_path}: {e}")
+            self.logger.error(f"ERROR: Error processing file {file_path}: {e}")
             self.errors.append(f"Error processing {file_path}: {str(e)}")
             return False
     
     def _report_summary(self) -> None:
         """Log summary of sync operation."""
-        logger.info("=" * 60)
-        logger.info("SYNC SUMMARY")
-        logger.info(f"Files copied: {self.files_copied}")
-        logger.info(f"Files skipped (unchanged): {self.files_skipped}")
+        self.logger.info("=" * 60)
+        self.logger.info("SYNC SUMMARY")
+        self.logger.info(f"Files copied: {self.files_copied}")
+        self.logger.info(f"Files skipped (unchanged): {self.files_skipped}")
         
         if self.files_changed:
-            logger.warning(f"WARNING: Files changed on phone ({len(self.files_changed)}):")
+            self.logger.warning(f"WARNING: Files changed on phone ({len(self.files_changed)}):")
             for f in self.files_changed:
-                logger.warning(f"  - {f}")
+                self.logger.warning(f"  - {f}")
         
         if self.errors:
-            logger.error(f"ERROR: Errors ({len(self.errors)}):")
+            self.logger.error(f"ERROR: Errors ({len(self.errors)}):")
             for e in self.errors:
-                logger.error(f"  - {e}")
+                self.logger.error(f"  - {e}")
         else:
-            logger.info("No errors")
+            self.logger.info("No errors")
         
-        logger.info("=" * 60)
+        self.logger.info("=" * 60)
 
 
 def main(config_path: str = "PhoneSync_config.yaml", max_files_per_sync: int = None) -> int:
-    """Main entry point. Create PhoneSync instance and run sync operation.
+    """Main entry point. Initialize PhoneSync and run sync operation.
     
     Args:
         config_path: Path to PhoneSync_config.yaml
         max_files_per_sync: Optional limit on number of files to copy (overrides config)
+    
+    Returns:
+        Exit code: 0 on success, 1 on failure
     """
     try:
         sync = PhoneSync(config_path, max_files_per_sync)
-        success = sync.run()
-        
-        logger.info("=" * 60)
-        if success:
-            logger.info("PhoneSync completed successfully")
-        else:
-            logger.error("ERROR: PhoneSync completed with errors")
-        logger.info(f"Log file: {sync.log_file}")
-        logger.info("=" * 60)
-        
-        # Flush and close all handlers
-        for handler in logging.getLogger().handlers:
-            handler.flush()
-            handler.close()
-        logging.shutdown()
-        
-        print(f"\n✓ Log saved to: {sync.log_file}")
-        return 0 if success else 1
+        sync.run()
+        return 0
     except ValueError as e:
         print(f"Configuration error: {e}")
         return 1
     except Exception as e:
         print(f"Fatal error: {e}")
-        for handler in logging.getLogger().handlers:
-            handler.flush()
-            handler.close()
-        logging.shutdown()
         return 1
 
 

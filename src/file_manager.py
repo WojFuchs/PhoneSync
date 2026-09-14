@@ -31,6 +31,14 @@ class LocalFileManager:
         """Find all existing Sync_*_<Phone_Name> folders sorted by timestamp (oldest to newest)."""
         pattern = f"Sync_*_{phone_name}"
         folders = sorted(self.destination_folder.glob(pattern))
+        
+        if folders:
+            first_folder = folders[0].name
+            last_folder = folders[-1].name
+            logger.info(f"Found {len(folders)} existing sync folder(s) for '{phone_name}' - oldest: {first_folder}, newest: {last_folder}")
+        else:
+            logger.info(f"No existing sync folders found for '{phone_name}'")
+        
         return folders
     
     def find_file_in_sync_folders(self, file_relative_path: str, sync_folders: List[Path]) -> Optional[Path]:

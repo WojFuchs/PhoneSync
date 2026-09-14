@@ -46,6 +46,9 @@ class PhoneSync:
         if max_files_per_sync_param is not None:
             self.logger.info(f"Limiting copy to {max_files_per_sync_param} files (command-line override)")
         self.logger.info("=" * 60)
+        
+        # Execute sync operation
+        self.run()
     
     def _setup_logging(self) -> Path:
         """Setup logging to both console and file. Returns log file path."""
@@ -142,6 +145,7 @@ class PhoneSync:
             
             sync_folder = self.file_manager.create_sync_folder(device.normalized_name, self.sync_timestamp)
             existing_folders = self.file_manager.find_existing_sync_folders(device.normalized_name)
+            self.logger.info(f"Found {len(existing_folders)} existing sync folder(s) for {device.normalized_name}")
             
             scanner = USBScanner(device)
             
@@ -203,6 +207,7 @@ class PhoneSync:
                 return False
             else:
                 self.logger.warning(f"WARNING: File changed on phone: {file_relative_path}")
+                self.logger.debug(f"  existing: size={existing_file.stat().st_size} mtime={int(existing_file.stat().st_mtime)} | phone: size={file_size} mtime={file_info.get('modtime', 0)}")
                 self.files_changed.append(file_relative_path)
                 return True
         
@@ -283,27 +288,12 @@ class PhoneSync:
         self.logger.info("=" * 60)
 
 
-def main(config_path: str = "PhoneSync_config.yaml", max_files_per_sync: int = None) -> int:
-    """Main entry point. Initialize PhoneSync and run sync operation.
-    
-    Args:
-        config_path: Path to PhoneSync_config.yaml
-        max_files_per_sync: Optional limit on number of files to copy (overrides config)
-    
-    Returns:
-        Exit code: 0 on success, 1 on failure
-    """
+if __name__ == "__main__":
     try:
-        sync = PhoneSync(config_path, max_files_per_sync)
-        sync.run()
-        return 0
+        PhoneSync()
     except ValueError as e:
         print(f"Configuration error: {e}")
-        return 1
+        exit(1)
     except Exception as e:
         print(f"Fatal error: {e}")
-        return 1
-
-
-if __name__ == "__main__":
-    exit(main())
+        exit(1)
